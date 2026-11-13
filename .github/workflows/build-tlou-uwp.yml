@@ -10,7 +10,7 @@ name: Build TLOU UWP (Xbox Dev Mode)
 on:
   push:
     branches: [main]
-    tags: ['tlou-v*']
+    tags: ['tlou-v*', 'v*-uwp']
   workflow_dispatch:
     inputs:
       tag:
@@ -197,7 +197,7 @@ jobs:
   release:
     name: GitHub Release
     needs: [runtime, app]
-    if: startsWith(github.ref, 'refs/tags/tlou-v') || github.event.inputs.tag != ''
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

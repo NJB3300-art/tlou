@@ -49,6 +49,7 @@ Settings Settings::Load(const fs::path& file) {
     s.background_shaders = json.GetNamedBoolean(L"background_shaders", s.background_shaders);
     s.draw_pipe = json.GetNamedBoolean(L"draw_pipe", s.draw_pipe);
     s.frame_stats = json.GetNamedBoolean(L"frame_stats", s.frame_stats);
+    s.quarter_depth = json.GetNamedBoolean(L"quarter_depth", s.quarter_depth);
     s.vulkan_driver = int(json.GetNamedNumber(L"vulkan_driver", s.vulkan_driver));
     s.root = std::wstring(json.GetNamedString(L"root", L""));
     return s;
@@ -60,6 +61,7 @@ void Settings::Save(const fs::path& file) const {
     json.SetNamedValue(L"background_shaders", JsonValue::CreateBooleanValue(background_shaders));
     json.SetNamedValue(L"draw_pipe", JsonValue::CreateBooleanValue(draw_pipe));
     json.SetNamedValue(L"frame_stats", JsonValue::CreateBooleanValue(frame_stats));
+    json.SetNamedValue(L"quarter_depth", JsonValue::CreateBooleanValue(quarter_depth));
     json.SetNamedValue(L"vulkan_driver", JsonValue::CreateNumberValue(vulkan_driver));
     json.SetNamedValue(L"root", JsonValue::CreateStringValue(root));
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
@@ -136,6 +138,7 @@ Launch BuildLaunch(const StageInfo& stage, const Settings& settings, const fs::p
     }
     env["GOW3_DRAW_PIPE"] = settings.draw_pipe ? "1" : "0";
     env["GOW3_FRAME_STATS"] = settings.frame_stats ? "1" : "0";
+    env["GOW3_QUARTER_DEPTH"] = settings.quarter_depth ? "1" : "0";
     // A packaged app has no installed Vulkan driver: the package's (README).
     if (settings.vulkan_driver == 1) env["GOW3_VULKAN_DLL"] = "vulkan_dzn.dll";
     if (Exists(install_dir / L"vulkan_icd.json")) {

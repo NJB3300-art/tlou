@@ -8,7 +8,7 @@ using namespace winrt;
 using namespace winrt::Windows::ApplicationModel;
 using namespace winrt::Windows::ApplicationModel::Activation;
 using namespace winrt::Windows::ApplicationModel::Core;
-using namespace winrt::Windows::Foundation;
+
 using namespace winrt::Windows::Graphics::Display;
 using namespace winrt::Windows::UI::Core;
 using namespace winrt::Windows::UI::ViewManagement;
@@ -24,7 +24,7 @@ struct __declspec(uuid("45D64A29-A63E-4CB6-B498-5781D298CB4F")) ICoreWindowInter
 
 constexpr wchar_t AppTitle[] = L"The Last of Us Remastered — UWP";
 
-enum class Item { Play, Location, MotionBlur, BackgroundShaders, DrawPipe, FrameStats, VulkanDriver, Exit, Count };
+enum class Item { Play, Location, MotionBlur, ContactShadows, BackgroundShaders, DrawPipe, FrameStats, VulkanDriver, Exit, Count };
 
 // One controller button press per edge, with auto-repeat for the d-pad.
 struct PadNav {
@@ -276,7 +276,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         std::error_code ignored;
         fs::create_directories(user_dir / L"cache", ignored);
         fs::create_directories(local_state / L"TLOU", ignored);
-        settings = Settings::Load(local_state / L"launcher.json");
+        settings = tlou::Settings::Load(local_state / L"launcher.json");
         input = std::make_unique<tlou::Input>();
         audio = std::make_unique<tlou::Audio>();
         FindGame();
@@ -351,6 +351,7 @@ private:
                 v.items.push_back({L"Game folder", roots.empty() ? L"not found" : roots[root_index].wstring()});
                 break;
             case Item::MotionBlur: v.items.push_back({L"Motion blur", OnOff(settings.motion_blur)}); break;
+            case Item::ContactShadows: v.items.push_back({L"Align contact shadows", OnOff(settings.quarter_depth)}); break;
             case Item::BackgroundShaders: v.items.push_back({L"Shaders in background", OnOff(settings.background_shaders)}); break;
             case Item::DrawPipe: v.items.push_back({L"Draw pipeline", OnOff(settings.draw_pipe)}); break;
             case Item::FrameStats: v.items.push_back({L"Frame statistics", OnOff(settings.frame_stats)}); break;
@@ -393,6 +394,7 @@ private:
             }
             break;
         case Item::MotionBlur: settings.motion_blur = !settings.motion_blur; break;
+        case Item::ContactShadows: settings.quarter_depth = !settings.quarter_depth; break;
         case Item::BackgroundShaders: settings.background_shaders = !settings.background_shaders; break;
         case Item::DrawPipe: settings.draw_pipe = !settings.draw_pipe; break;
         case Item::FrameStats: settings.frame_stats = !settings.frame_stats; break;

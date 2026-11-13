@@ -12,7 +12,7 @@ built by GitHub Actions; whether the game starts on an Xbox depends on the limit
 
 | PC version | UWP version |
 | --- | --- |
-| `TLOU Launcher.exe` / `tlou_launcher.pyw` | The app's own launcher (controller-driven): game folder, motion blur, background shaders, draw pipeline, frame statistics, Vulkan driver |
+| `TLOU Launcher.exe` / `tlou_launcher.pyw` | The app's own launcher (controller-driven): game folder, motion blur, align contact shadows, background shaders, draw pipeline, frame statistics, Vulkan driver |
 | `TLOU Game.exe` / `run_game.py` | **Play** in the app (or Menu on the controller) |
 | `gow3-probe.exe`, started by `probe_tlou.py` | `gow3-runtime.dll`, loaded and run inside the app (`gow3_uwp_run`) |
 | Python preparation at every start | Done once on the PC: `Stage-TLOU-Xbox.cmd` (`probe_tlou.py --stage`) |
@@ -38,8 +38,9 @@ code is in `gow3_pc/uwp/` and `uwp-app/`; the edits to existing files are marked
    `--game <folder>`.
 2. Run `Stage-TLOU-Xbox.cmd`. It prepares the game exactly as the PC version does at each start
    and writes `uwp-stage\` (`boot.json` and the prepared files). The render resolution, aim assist,
-   PS4 Pro shadows and job sleep are fixed here (they patch the game): set them with
-   `TLOU_RESOLUTION=1920x1080`, `TLOU_AIM_ASSIST=0`, … before running it.
+   PS4 Pro shadows, job sleep and v0.2.2's contact shadows at half resolution are fixed here (they
+   patch the game): set them with `TLOU_RESOLUTION=1920x1080`, `TLOU_AIM_ASSIST=0`,
+   `TLOU_AMBIENT_SHADOWS=quarter`, … before running it.
 3. Copy to an external drive (exFAT/NTFS), in a folder `TLOU`:
    ```
    E:\TLOU\CUSA00552\          the game
