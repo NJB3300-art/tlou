@@ -4,6 +4,8 @@ A copy of [ravencaio/tlou-remastered-pc](https://github.com/ravencaio/tlou-remas
 the native PC port of the PS4 *The Last of Us Remastered* (CUSA00552), with its Windows pieces
 (launcher, game start, runtime) rebuilt to run as a UWP app on an Xbox in Developer Mode.
 
+**[Help! — video setup guide](https://njb3300-art.github.io/tlou/help/)** (narrated, with captions) · [HELP.md](HELP.md)
+
 **No game files are in this repository.** You need your own dump of the game and its update 1.11.
 Not affiliated with Sony Interactive Entertainment, Naughty Dog or Microsoft.
 

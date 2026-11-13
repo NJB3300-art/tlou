@@ -1,0 +1,104 @@
+WEBVTT
+
+00:00:00.500 --> 00:00:06.821
+Welcome. This video shows how to set up The Last of Us Remastered on an Xbox in Developer Mode.
+
+00:00:07.271 --> 00:00:14.929
+It uses the UWP port of the PC version. No game files are included, so you need your own copy of the game.
+
+00:00:15.879 --> 00:00:17.597
+First, what you need.
+
+00:00:18.047 --> 00:00:21.999
+An Xbox Series X or S that is in Developer Mode.
+
+00:00:22.449 --> 00:00:26.635
+A Windows PC with Python 3.10 or newer.
+
+00:00:27.085 --> 00:00:33.629
+Your own dump of the game, CUSA00552, and its update 1.11.
+
+00:00:34.079 --> 00:00:38.132
+And a USB drive, formatted as exFAT or NTFS.
+
+00:00:39.082 --> 00:00:44.939
+Step one. Open the releases page of the GitHub repository, and pick the newest release.
+
+00:00:45.389 --> 00:00:49.166
+Download the Xbox zip. It holds the app package.
+
+00:00:49.616 --> 00:00:55.318
+Then download the stage kit zip. It holds the tools that prepare the game on your PC.
+
+00:00:56.268 --> 00:01:00.468
+Step two happens on the PC. Unzip the stage kit into a folder.
+
+00:01:00.918 --> 00:01:10.589
+Put your game folder, CUSA00552, and the update folder, CUSA00552-patch, next to it.
+
+00:01:11.039 --> 00:01:15.208
+Now double-click Stage-TLOU-Xbox.cmd.
+
+00:01:15.658 --> 00:01:23.967
+It prepares the game once, the same way the PC version does at every start, and writes a folder called uwp-stage.
+
+00:01:24.417 --> 00:01:31.421
+Settings that change the game itself, like the render resolution, are chosen here. Set them before you run it.
+
+00:01:32.371 --> 00:01:37.385
+Step three. On the USB drive, make a folder called TLOU.
+
+00:01:37.835 --> 00:01:41.288
+Copy the game folder and the update folder into it.
+
+00:01:41.738 --> 00:01:47.011
+Then copy the uwp-stage folder there too, and rename it to stage.
+
+00:01:47.461 --> 00:01:53.323
+Plug the drive into the Xbox. The app looks for the TLOU folder on every drive.
+
+00:01:54.273 --> 00:02:03.489
+Step four. On the Xbox, open Dev Home. It shows the address of Device Portal. Open that address in a browser on your PC.
+
+00:02:03.939 --> 00:02:06.808
+Under My games & apps, choose Add.
+
+00:02:07.258 --> 00:02:13.070
+Unzip the Xbox zip, and select the app package, the file ending in .msix.
+
+00:02:13.520 --> 00:02:19.303
+When it asks for dependencies, add the VCLibs x64 package from the same zip.
+
+00:02:19.753 --> 00:02:23.132
+Then start the install, and wait for it to finish.
+
+00:02:24.082 --> 00:02:28.661
+Step five. In Dev Home, select the app, and open its details.
+
+00:02:29.111 --> 00:02:35.757
+Set the app type to Game. Games get much more memory, and the runtime needs about six gigabytes.
+
+00:02:36.207 --> 00:02:42.491
+Now start the app. The launcher shows whether it found the game, the update, and the stage folder.
+
+00:02:42.941 --> 00:02:48.467
+Press A to change a setting. Choose Play, or press the menu button, to start the game.
+
+00:02:49.417 --> 00:02:52.277
+If something goes wrong, check the logs.
+
+00:02:52.727 --> 00:02:56.458
+If nothing happens when you start the app, read app.log.
+
+00:02:56.908 --> 00:03:03.850
+If the game stops, read boot.log. The launcher also shows its last lines the next time it opens.
+
+00:03:04.300 --> 00:03:13.260
+Both files are in the app's LocalState folder. Open it from Device Portal, in the file explorer, under LocalAppData.
+
+00:03:13.710 --> 00:03:22.844
+One known limit: the Xbox has no Vulkan driver yet, so the game may stop when it starts its renderer. The help page has the details.
+
+00:03:23.794 --> 00:03:29.480
+That's it. For updates and help, visit the GitHub repository. Enjoy the game.
+
