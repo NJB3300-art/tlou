@@ -18,3 +18,16 @@ This repo contains **no game files**. The app only streams from a Sunshine host 
 - `patches/blade-theme.patch` - the theme changes (App.xaml, host and app pages)
 
 Licensed consistent with upstream (GPL). Not affiliated with Microsoft, Sony or Naughty Dog.
+
+---
+
+# The Last of Us Remastered — UWP port (branch `tlou-uwp`)
+
+A UWP (Xbox Developer Mode) version of [ravencaio/tlou-remastered-pc](https://github.com/ravencaio/tlou-remastered-pc):
+its launcher and game start rebuilt as a packaged app, and its runtime built as a DLL that runs
+inside it. See [`uwp-app/README.md`](uwp-app/README.md) for what changed, how to stage your own
+game dump on a PC, how to install it, and the known limits (Vulkan on Xbox).
+
+- `patches/tlou-uwp.patch` - the port's changes (runtime as `gow3-runtime.dll`, SDL3 stand-in, app-container memory calls, `probe_tlou.py --stage`)
+- `uwp-app/` - the UWP app (C++/WinRT): launcher and host
+- `.github/workflows/build-tlou-uwp.yml` - builds both and packages them; a `tlou-v*` tag publishes a release

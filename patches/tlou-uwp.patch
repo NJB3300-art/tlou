@@ -1,0 +1,1835 @@
+diff --git a/Stage-TLOU-Xbox.cmd b/Stage-TLOU-Xbox.cmd
+new file mode 100644
+index 0000000..88f3062
+--- /dev/null
++++ b/Stage-TLOU-Xbox.cmd
+@@ -0,0 +1,8 @@
++@echo off
++rem The Last of Us Remastered (CUSA00552) for the UWP app (Xbox Developer Mode): prepares the game
++rem here on the PC and writes uwp-stage\ (boot.json and the prepared files). Copy uwp-stage to the
++rem console as TLOU\stage, next to TLOU\CUSA00552 and TLOU\CUSA00552-patch.
++rem The game folder is ..\CUSA00552 (or --game <folder>); the resolution is the launcher's (tlou.ini).
++cd /d "%~dp0"
++python tools\probe_tlou.py --stage "%~dp0uwp-stage" %*
++if errorlevel 1 pause
+diff --git a/gow3_pc/gpu/CMakeLists.txt b/gow3_pc/gpu/CMakeLists.txt
+index 04690e2..6451d2d 100644
+--- a/gow3_pc/gpu/CMakeLists.txt
++++ b/gow3_pc/gpu/CMakeLists.txt
+@@ -18,6 +18,13 @@ add_compile_options(-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=gpu)
+ # profile). Covers gow3gpu and the static libraries linked into it. No -march: the same build
+ # runs on the Steam Deck.
+ option(GOW3_LTO "Link-time optimization of gow3gpu" ON)
++# gow3 UWP (Xbox Developer Mode): the runtime as gow3-runtime.dll for the packaged app in
++# ../../uwp-app (or the TLOU.Uwp project), with SDL3 replaced by ../uwp/sdl over the app's
++# callbacks and the memory calls routed to their *FromApp versions (../uwp/uwp_platform.c).
++option(GOW3_UWP "Build gow3-runtime.dll for the UWP app" OFF)
++if (GOW3_UWP)
++    add_compile_definitions(GOW3_UWP)
++endif()
+ set(GOW3_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
+ set(GOW3_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
+ if (GOW3_LTO)
+@@ -75,7 +82,14 @@ if (NOT VulkanMemoryAllocator_FOUND)
+ endif()
+ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
+-pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
++if (GOW3_UWP)
++    # The SDL3 stand-in: same target name, so every link line below stays as it is.
++    add_library(PkgConfig::SDL3 INTERFACE IMPORTED)
++    set_target_properties(PkgConfig::SDL3 PROPERTIES
++        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../uwp/sdl)
++else()
++    pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
++endif()
+ if (NOT WIN32)
+     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+ endif()
+@@ -168,6 +182,9 @@ add_library(gow3gpu ${GOW3GPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM
+     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
+     shadps4/core/libraries/videodec/video_utils.cpp)
+ add_dependencies(gow3gpu host_shaders)
++if (GOW3_UWP)
++    target_sources(gow3gpu PRIVATE ../uwp/sdl/uwp_sdl.cpp)
++endif()
+ # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
+ # embedded Cyrillic font (third_party/fonts).
+ target_sources(gow3gpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
+@@ -194,7 +211,12 @@ if (WIN32)
+     # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
+     target_compile_definitions(gow3gpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+     target_compile_options(gow3gpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/gow3_win_compat.h)
+-    target_link_libraries(gow3gpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm pdh)
++    if (GOW3_UWP)
++        # No multimedia timer (winmm) or performance counters (pdh) in an app container.
++        target_link_libraries(gow3gpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization onecore)
++    else()
++        target_link_libraries(gow3gpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm pdh)
++    endif()
+ else()
+     target_link_libraries(gow3gpu PUBLIC PkgConfig::X11)
+ endif()
+@@ -217,6 +239,19 @@ if (WIN32)
+     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
+     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
+     target_link_options(gow3-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
++    # gow3 UWP: the same program as gow3-probe.exe, as a DLL the packaged app loads and calls
++    # (../uwp/uwp_entry.c: gow3_uwp_run); probe.c's main becomes gow3_probe_main there.
++    if (GOW3_UWP)
++        add_library(gow3-runtime SHARED ../src/probe.c ${GOW3_RUNTIME} ../src/compat_win.c ../src/cpu_check.c
++            ../src/red_zone.c ../uwp/uwp_platform.c ../uwp/uwp_entry.c)
++        set_target_properties(gow3-runtime PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF PREFIX "")
++        set_source_files_properties(../src/probe.c PROPERTIES COMPILE_DEFINITIONS main=gow3_probe_main)
++        target_compile_options(gow3-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
++        target_include_directories(gow3-runtime PRIVATE .. ../src ../uwp)
++        target_link_libraries(gow3-runtime PRIVATE gow3gpu atrac9 onecore bcrypt ws2_32 -pthread)
++        # The PS4 range must stay free here too; the app's own executable is linked the same way.
++        target_link_options(gow3-runtime PRIVATE -Wl,--disable-high-entropy-va)
++    endif()
+     # gow3: runtime unit tests (ninja -C out/gpu mp3-test videodec-test services-test).
+     add_executable(mp3-test EXCLUDE_FROM_ALL ../tests/test_mp3.c ../src/runtime_mp3.c ../src/compat_win.c)
+     add_executable(videodec-test EXCLUDE_FROM_ALL ../tests/test_videodec.c ../src/compat_win.c)
+diff --git a/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_dlss.cpp b/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_dlss.cpp
+index 53f4464..89eb172 100644
+--- a/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_dlss.cpp
++++ b/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_dlss.cpp
+@@ -20,6 +20,10 @@
+ #include "../../../dlss_bridge/gow3_dlss_bridge.h"
+ #endif
+ 
++#ifdef GOW3_UWP
++extern "C" void* gow3_uwp_load_library_w(const wchar_t* name);
++#endif
++
+ namespace Vulkan {
+ 
+ int Dlss::QualityForScale(float scale) {
+@@ -109,7 +113,11 @@ Dlss* Dlss::Get() {
+ 
+ Dlss::Dlss() : impl{std::make_unique<Impl>()} {
+     const auto directory = ExecutableDirectory();
++    #ifdef GOW3_UWP
++    impl->module = static_cast<HMODULE>(gow3_uwp_load_library_w((directory / BridgeName).c_str()));
++#else
+     impl->module = LoadLibraryW((directory / BridgeName).c_str());
++#endif
+     const auto get_api =
+         impl->module ? reinterpret_cast<Gow3DlssGetApiFn>(GetProcAddress(impl->module, "Gow3DlssGetApi"))
+                      : nullptr;
+diff --git a/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_platform.cpp b/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_platform.cpp
+index 5df857d..89a0aa8 100644
+--- a/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_platform.cpp
++++ b/gow3_pc/gpu/shadps4/video_core/renderer_vulkan/vk_platform.cpp
+@@ -28,6 +28,11 @@
+ #include <mach-o/dyld.h>
+ #endif
+ 
++#ifdef GOW3_UWP
++extern "C" void* gow3_uwp_load_library_a(const char* name);
++extern "C" void* gow3_uwp_get_proc(void* module, const char* name);
++#endif
++
+ namespace Vulkan {
+ 
+ static const char* const VALIDATION_LAYER_NAME = "VK_LAYER_KHRONOS_validation";
+@@ -271,9 +276,28 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
+     setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
+ #endif
+ 
++#ifdef GOW3_UWP
++    // gow3 UWP: no Vulkan loader is installed for packaged apps. The driver DLL comes with the
++    // package: vulkan-1.dll (a loader or a driver), or GOW3_VULKAN_DLL (e.g. Mesa's
++    // vulkan_dzn.dll, which only exports the ICD entry point).
++    static const PFN_vkGetInstanceProcAddr get_instance_proc_addr = [] {
++        void* module = gow3_uwp_load_library_a("vulkan-1.dll");
++        ASSERT_MSG(module, "UWP: no Vulkan driver in the package (vulkan-1.dll or GOW3_VULKAN_DLL)");
++        auto* gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
++            gow3_uwp_get_proc(module, "vkGetInstanceProcAddr"));
++        if (!gipa) {
++            gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
++                gow3_uwp_get_proc(module, "vk_icdGetInstanceProcAddr"));
++        }
++        ASSERT_MSG(gipa, "UWP: the Vulkan DLL exports no vkGetInstanceProcAddr");
++        return gipa;
++    }();
++    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc_addr);
++#else
+     static vk::detail::DynamicLoader dl;
+     VULKAN_HPP_DEFAULT_DISPATCHER.init(
+         dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
++#endif
+ 
+     const auto [available_version_result, available_version] =
+         VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceVersion
+diff --git a/gow3_pc/gpu/shim/common/slot_vector_pages.cpp b/gow3_pc/gpu/shim/common/slot_vector_pages.cpp
+index 631048f..3e8a64c 100644
+--- a/gow3_pc/gpu/shim/common/slot_vector_pages.cpp
++++ b/gow3_pc/gpu/shim/common/slot_vector_pages.cpp
+@@ -7,6 +7,9 @@
+ 
+ #ifdef _WIN32
+ #include <windows.h>
++#ifdef GOW3_UWP
++#include "../../../uwp/uwp_platform.h"
++#endif
+ #else
+ #include <sys/mman.h>
+ #endif
+diff --git a/gow3_pc/gpu/shim/gow3_perf_stats.cpp b/gow3_pc/gpu/shim/gow3_perf_stats.cpp
+index 501fd53..208d11e 100644
+--- a/gow3_pc/gpu/shim/gow3_perf_stats.cpp
++++ b/gow3_pc/gpu/shim/gow3_perf_stats.cpp
+@@ -13,7 +13,9 @@
+ 
+ #ifdef _WIN32
+ #include <windows.h>
++#ifndef GOW3_UWP
+ #include <pdh.h>
++#endif
+ #include <pdhmsg.h>
+ #include <psapi.h>
+ #endif
+@@ -84,6 +86,13 @@ uint64_t Ticks(const FILETIME& time) {
+ 
+ // This process's use of the GPU's 3D engines, as Task Manager shows it ("GPU Engine" counters,
+ // any vendor). Negative until the second sample or without the counters.
++#ifdef GOW3_UWP
++// gow3 UWP: no performance counters (PDH) in an app container.
++class GpuUsage {
++public:
++    float Percent() { return -1.0f; }
++};
++#else
+ class GpuUsage {
+ public:
+     GpuUsage() {
+@@ -133,6 +142,7 @@ private:
+     std::wstring pid;
+     std::vector<unsigned char> buffer;
+ };
++#endif
+ 
+ void Run(const Vulkan::Instance* instance) {
+     GpuUsage gpu;
+diff --git a/gow3_pc/src/compat_win.c b/gow3_pc/src/compat_win.c
+index ba76871..181f88b 100644
+--- a/gow3_pc/src/compat_win.c
++++ b/gow3_pc/src/compat_win.c
+@@ -121,12 +121,19 @@ int compat_random(void *buffer, size_t size) {
+  *   The process opts out of power throttling by DEFAULT (29 Oct, with the tick); GOW3_POWER_THROTTLE=1
+  *   keeps Windows' throttling (opting out = no EcoQoS
+  *   on hybrid CPUs/laptops, and Windows 11 keeps the 1 ms tick while the window is hidden). */
++#ifndef GOW3_UWP
+ #include <mmsystem.h>
++#endif
+ static int env_switch(const char *name, int fallback) {
+     const char *v = getenv(name);
+     return v && *v ? strcmp(v, "0") != 0 : fallback;
+ }
+ void runtime_host_scheduling_init(void) {
++#ifdef GOW3_UWP
++    /* gow3 UWP: the console's scheduler; timeBeginPeriod and power throttling are desktop APIs. */
++    (void)env_switch;
++    puts("Host scheduling: UWP (no timer resolution or power throttling request)");
++#else
+     if (env_switch("GOW3_TIMER_RES", 1)) {
+         MMRESULT r = timeBeginPeriod(1);
+         printf("Host scheduling: 1 ms timer resolution%s (GOW3_TIMER_RES=0 keeps 15.6 ms)\n",
+@@ -142,6 +149,7 @@ void runtime_host_scheduling_init(void) {
+         printf("Host scheduling: power throttling off%s (GOW3_POWER_THROTTLE=1 keeps it)\n",
+                ok ? "" : " - REFUSED");
+     }
++#endif
+ }
+ 
+ static __thread HANDLE sleep_timer;
+diff --git a/gow3_pc/src/probe.c b/gow3_pc/src/probe.c
+index 92683b6..67ff1e1 100644
+--- a/gow3_pc/src/probe.c
++++ b/gow3_pc/src/probe.c
+@@ -20,6 +20,9 @@
+ #endif
+ #ifdef _WIN32
+ #include <windows.h>
++#ifdef GOW3_UWP
++#include "uwp/uwp_platform.h"
++#endif
+ #include <tlhelp32.h>
+ #else
+ #include <sys/mman.h>
+@@ -45,7 +48,9 @@ static LinkedModule modules[16];
+ static uint64_t module_count;
+ static int entered_game;
+ static int gpu_enabled;
++#ifndef GOW3_UWP
+ int vulkan_smoke(void);
++#endif
+ 
+ static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
+ static uint64_t read64(FILE *f) {
+@@ -553,7 +558,11 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
+         /* Faults in guest code, the loader or the runtime end the process with a report; drivers
+          * and system libraries may handle their own exceptions. */
+         uintptr_t rip=(uintptr_t)info->ContextRecord->Rip;
++        #ifdef GOW3_UWP
++        HMODULE self=gow3_uwp_self_module(), module=NULL;
++#else
+         HMODULE self=GetModuleHandleA(NULL), module=NULL;
++#endif
+         int ours=(image && rip-(uintptr_t)image<0x20000000) ||
+                  (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)rip,&module) && module==self) ||
+                  !module;
+@@ -1025,6 +1034,12 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
+ void runtime_restart(void) {
+     fflush(NULL);
+ #ifdef _WIN32
++#ifdef GOW3_UWP
++    /* gow3 UWP: an app cannot start itself again. The app's launcher starts the game anew. */
++    puts("Runtime: restart requested; close the game and press Play again (UWP)");
++    fflush(stdout);
++    _exit(0);
++#endif
+     /* run.py sets GOW3_RESTART_COMMAND: the launch command line, started again (new patches). */
+     const char *command=getenv("GOW3_RESTART_COMMAND");
+     puts("Runtime: restarting through run.py");
+@@ -1064,7 +1079,9 @@ int main(int argc, char **argv) {
+     mallopt(M_ARENA_MAX,1);
+     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
+ #endif
++#ifndef GOW3_UWP
+     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
++#endif
+ #ifdef _WIN32
+     /* The PS4 user range must stay free of host allocations (GPU driver, heaps), and the guest
+      * TCB needs one of the 64 TEB TLS slots before DLLs (Vulkan drivers) take them. */
+@@ -1417,4 +1434,7 @@ int main(int argc, char **argv) {
+     enter_on_stack(image+entry,&params,(void *)guest_exit,stack+MAIN_STACK-64);
+ #endif
+     fail("entry unexpectedly returned");
++#ifdef GOW3_UWP
++    return 1; /* main is gow3_probe_main here: no implicit return */
++#endif
+ }
+diff --git a/gow3_pc/src/runtime_memory.c b/gow3_pc/src/runtime_memory.c
+index e8956b9..b689ad3 100644
+--- a/gow3_pc/src/runtime_memory.c
++++ b/gow3_pc/src/runtime_memory.c
+@@ -18,6 +18,9 @@
+ #include <errno.h>
+ #ifdef _WIN32
+ #include <windows.h>
++#ifdef GOW3_UWP
++#include "uwp/uwp_platform.h"
++#endif
+ #else
+ #include <fcntl.h>
+ #include <sys/mman.h>
+diff --git a/gow3_pc/uwp/gow3_uwp_host.h b/gow3_pc/uwp/gow3_uwp_host.h
+new file mode 100644
+index 0000000..60b3c56
+--- /dev/null
++++ b/gow3_pc/uwp/gow3_uwp_host.h
+@@ -0,0 +1,75 @@
++/* gow3 UWP: the C interface between the UWP app (TLOU.Uwp, C++/WinRT, built with MSVC) and the
++ * runtime DLL (gow3-runtime.dll, built with MSYS2 CLANG64 and -DGOW3_UWP).
++ *
++ * The app owns everything the app container lets it own: the CoreWindow, Windows.Gaming.Input
++ * gamepads, the keyboard and XAudio2. It hands the runtime a table of callbacks; the runtime's
++ * SDL3 stand-in (uwp/sdl) answers the SDL calls the port makes with them. Every callback may be
++ * called from any runtime thread and must be thread-safe.
++ *
++ * Plain C, no Windows headers: both compilers see the same layout. */
++#pragma once
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define GOW3_UWP_HOST_VERSION 1
++
++/* Windows.Gaming.Input.GamepadButtons bits, as the app reads them. */
++enum {
++    GOW3_UWP_PAD_MENU = 0x1, GOW3_UWP_PAD_VIEW = 0x2, GOW3_UWP_PAD_A = 0x4, GOW3_UWP_PAD_B = 0x8,
++    GOW3_UWP_PAD_X = 0x10, GOW3_UWP_PAD_Y = 0x20, GOW3_UWP_PAD_DPAD_UP = 0x40,
++    GOW3_UWP_PAD_DPAD_DOWN = 0x80, GOW3_UWP_PAD_DPAD_LEFT = 0x100, GOW3_UWP_PAD_DPAD_RIGHT = 0x200,
++    GOW3_UWP_PAD_LEFT_SHOULDER = 0x400, GOW3_UWP_PAD_RIGHT_SHOULDER = 0x800,
++    GOW3_UWP_PAD_LEFT_THUMB = 0x1000, GOW3_UWP_PAD_RIGHT_THUMB = 0x2000,
++    GOW3_UWP_PAD_PADDLE1 = 0x4000, GOW3_UWP_PAD_PADDLE2 = 0x8000, GOW3_UWP_PAD_PADDLE3 = 0x10000,
++    GOW3_UWP_PAD_PADDLE4 = 0x20000,
++};
++
++typedef struct gow3_uwp_gamepad {
++    int32_t connected;
++    uint32_t buttons;            /* GOW3_UWP_PAD_* */
++    float left_x, left_y;        /* -1..1, up is positive (Windows.Gaming.Input) */
++    float right_x, right_y;
++    float left_trigger, right_trigger; /* 0..1 */
++} gow3_uwp_gamepad;
++
++/* Window state bits. */
++enum { GOW3_UWP_WINDOW_FOCUSED = 1, GOW3_UWP_WINDOW_VISIBLE = 2, GOW3_UWP_WINDOW_CLOSED = 4 };
++
++typedef struct gow3_uwp_host {
++    uint32_t version;            /* GOW3_UWP_HOST_VERSION */
++    void *ctx;                   /* passed back to every callback */
++    void *core_window;           /* ABI::Windows::UI::Core::ICoreWindow* (IUnknown) */
++    void *hwnd;                  /* ICoreWindowInterop::get_WindowHandle; may be NULL */
++    int32_t display_width, display_height; /* the TV's mode in pixels */
++    float refresh_rate;          /* Hz, 0 when unknown */
++
++    void (*window_size)(void *ctx, int32_t *width, int32_t *height);
++    uint32_t (*window_state)(void *ctx);
++    /* Gamepad `index` (0..3): returns 0 when there is none. */
++    int32_t (*gamepad)(void *ctx, int32_t index, gow3_uwp_gamepad *out);
++    void (*rumble)(void *ctx, int32_t index, float low, float high, uint32_t milliseconds);
++    /* Keyboard events in USB HID scancodes (SDL's): returns 0 when the queue is empty. */
++    int32_t (*key_event)(void *ctx, int32_t *scancode, int32_t *down);
++    /* Audio output: handle > 0, or 0 when it failed. Bytes are interleaved 48 kHz frames. */
++    int32_t (*audio_open)(void *ctx, int32_t channels, int32_t is_float, int32_t rate);
++    int32_t (*audio_queued)(void *ctx, int32_t handle);
++    void (*audio_put)(void *ctx, int32_t handle, const void *data, int32_t bytes);
++    void (*audio_close)(void *ctx, int32_t handle);
++    int32_t (*audio_device_channels)(void *ctx);
++    /* A line for the app's log view (UTF-8). */
++    void (*log)(void *ctx, const char *line);
++} gow3_uwp_host;
++
++/* Exported by gow3-runtime.dll. */
++typedef int32_t (*gow3_uwp_api_version_fn)(void);
++typedef void (*gow3_uwp_set_host_fn)(const gow3_uwp_host *host);
++typedef int32_t (*gow3_uwp_setenv_fn)(const char *name, const char *value);
++/* Runs the game on the calling thread (give it a 16 MiB stack). log_path: stdout/stderr go there. */
++typedef int32_t (*gow3_uwp_run_fn)(int32_t argc, const char *const *argv, const char *log_path);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/gow3_pc/uwp/sdl/SDL3/SDL.h b/gow3_pc/uwp/sdl/SDL3/SDL.h
+new file mode 100644
+index 0000000..0b76605
+--- /dev/null
++++ b/gow3_pc/uwp/sdl/SDL3/SDL.h
+@@ -0,0 +1,331 @@
++/* gow3 UWP: a stand-in for the part of SDL3 the port uses.
++ *
++ * SDL3 has no UWP backend (it dropped WinRT), and an app container cannot create Win32 windows.
++ * In the UWP build this header takes the place of <SDL3/SDL.h>: the same names, types and the
++ * values that the port stores or shifts (gamepad buttons, scancodes, keycodes), implemented in
++ * uwp_sdl.cpp over the callbacks the UWP app provides (gow3_uwp_host.h). Only what the port calls
++ * is here. */
++#pragma once
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef uint8_t Uint8;
++typedef int16_t Sint16;
++typedef uint16_t Uint16;
++typedef int32_t Sint32;
++typedef uint32_t Uint32;
++typedef int64_t Sint64;
++typedef uint64_t Uint64;
++
++/* ---- init, errors, hints, misc ---- */
++typedef Uint32 SDL_InitFlags;
++#define SDL_INIT_AUDIO 0x00000010u
++#define SDL_INIT_VIDEO 0x00000020u
++#define SDL_INIT_GAMEPAD 0x00002000u
++bool SDL_InitSubSystem(SDL_InitFlags flags);
++SDL_InitFlags SDL_WasInit(SDL_InitFlags flags);
++const char *SDL_GetError(void);
++bool SDL_SetHint(const char *name, const char *value);
++#define SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES "SDL_AUDIO_DEVICE_SAMPLE_FRAMES"
++#define SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS"
++#define SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS "SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS"
++#define SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN "SDL_WINDOW_ACTIVATE_WHEN_SHOWN"
++void SDL_Delay(Uint32 ms);
++void SDL_free(void *memory);
++int SDL_strcasecmp(const char *a, const char *b);
++
++/* ---- properties ---- */
++typedef Uint32 SDL_PropertiesID;
++SDL_PropertiesID SDL_CreateProperties(void);
++void SDL_DestroyProperties(SDL_PropertiesID props);
++bool SDL_SetStringProperty(SDL_PropertiesID props, const char *name, const char *value);
++bool SDL_SetNumberProperty(SDL_PropertiesID props, const char *name, Sint64 value);
++bool SDL_SetBooleanProperty(SDL_PropertiesID props, const char *name, bool value);
++Sint64 SDL_GetNumberProperty(SDL_PropertiesID props, const char *name, Sint64 fallback);
++void *SDL_GetPointerProperty(SDL_PropertiesID props, const char *name, void *fallback);
++#define SDL_PROP_WINDOW_CREATE_TITLE_STRING "SDL.window.create.title"
++#define SDL_PROP_WINDOW_CREATE_X_NUMBER "SDL.window.create.x"
++#define SDL_PROP_WINDOW_CREATE_Y_NUMBER "SDL.window.create.y"
++#define SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER "SDL.window.create.width"
++#define SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER "SDL.window.create.height"
++#define SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN "SDL.window.create.resizable"
++#define SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN "SDL.window.create.vulkan"
++#define SDL_PROP_WINDOW_WIN32_HWND_POINTER "SDL.window.win32.hwnd"
++#define SDL_PROP_WINDOW_X11_DISPLAY_POINTER "SDL.window.x11.display"
++#define SDL_PROP_WINDOW_X11_WINDOW_NUMBER "SDL.window.x11.window"
++#define SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER "SDL.window.wayland.display"
++#define SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER "SDL.window.wayland.surface"
++/* Not SDL's: the CoreWindow (IUnknown*) of the UWP app, for a Vulkan driver that takes one. */
++#define SDL_PROP_WINDOW_WINRT_WINDOW_POINTER "SDL.window.winrt.window"
++
++/* ---- video ---- */
++typedef struct SDL_Window SDL_Window;
++typedef Uint32 SDL_WindowID;
++typedef Uint32 SDL_DisplayID;
++typedef Uint64 SDL_WindowFlags;
++#define SDL_WINDOW_FULLSCREEN 0x0000000000000001ull
++#define SDL_WINDOW_MINIMIZED 0x0000000000000040ull
++#define SDL_WINDOW_INPUT_FOCUS 0x0000000000000200ull
++#define SDL_WINDOWPOS_CENTERED 0x2FFF0000u
++typedef struct SDL_Rect { int x, y, w, h; } SDL_Rect;
++typedef Uint32 SDL_PixelFormat;
++typedef struct SDL_DisplayMode {
++    SDL_DisplayID displayID;
++    SDL_PixelFormat format;
++    int w, h;
++    float pixel_density;
++    float refresh_rate;
++    int refresh_rate_numerator, refresh_rate_denominator;
++    void *internal;
++} SDL_DisplayMode;
++typedef struct SDL_Surface SDL_Surface;
++
++SDL_Window *SDL_CreateWindowWithProperties(SDL_PropertiesID props);
++void SDL_DestroyWindow(SDL_Window *window);
++SDL_PropertiesID SDL_GetWindowProperties(SDL_Window *window);
++SDL_Window *SDL_GetWindowFromID(SDL_WindowID id);
++bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *w, int *h);
++float SDL_GetWindowPixelDensity(SDL_Window *window);
++SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window);
++bool SDL_SetWindowFullscreen(SDL_Window *window, bool fullscreen);
++bool SDL_SetWindowFullscreenMode(SDL_Window *window, const SDL_DisplayMode *mode);
++bool SDL_SyncWindow(SDL_Window *window);
++bool SDL_SetWindowSize(SDL_Window *window, int w, int h);
++bool SDL_SetWindowPosition(SDL_Window *window, int x, int y);
++bool SDL_RaiseWindow(SDL_Window *window);
++bool SDL_SetWindowTitle(SDL_Window *window, const char *title);
++bool SDL_SetWindowIcon(SDL_Window *window, SDL_Surface *icon);
++bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled);
++SDL_DisplayID SDL_GetDisplayForWindow(SDL_Window *window);
++SDL_DisplayID SDL_GetPrimaryDisplay(void);
++bool SDL_GetDisplayUsableBounds(SDL_DisplayID display, SDL_Rect *rect);
++const SDL_DisplayMode *SDL_GetCurrentDisplayMode(SDL_DisplayID display);
++const SDL_DisplayMode *SDL_GetDesktopDisplayMode(SDL_DisplayID display);
++const char *SDL_GetCurrentVideoDriver(void);
++SDL_Surface *SDL_LoadBMP(const char *file);
++void SDL_DestroySurface(SDL_Surface *surface);
++bool SDL_HideCursor(void);
++bool SDL_StartTextInput(SDL_Window *window);
++bool SDL_StopTextInput(SDL_Window *window);
++bool SDL_TextInputActive(SDL_Window *window);
++
++/* ---- keyboard (USB HID scancodes and SDL3 keycodes) ---- */
++typedef enum SDL_Scancode {
++    SDL_SCANCODE_UNKNOWN = 0,
++    SDL_SCANCODE_A = 4, SDL_SCANCODE_B = 5, SDL_SCANCODE_C = 6, SDL_SCANCODE_D = 7, SDL_SCANCODE_E = 8,
++    SDL_SCANCODE_F = 9, SDL_SCANCODE_G = 10, SDL_SCANCODE_H = 11, SDL_SCANCODE_I = 12, SDL_SCANCODE_J = 13,
++    SDL_SCANCODE_K = 14, SDL_SCANCODE_L = 15, SDL_SCANCODE_M = 16, SDL_SCANCODE_N = 17, SDL_SCANCODE_O = 18,
++    SDL_SCANCODE_P = 19, SDL_SCANCODE_Q = 20, SDL_SCANCODE_R = 21, SDL_SCANCODE_S = 22, SDL_SCANCODE_T = 23,
++    SDL_SCANCODE_U = 24, SDL_SCANCODE_V = 25, SDL_SCANCODE_W = 26, SDL_SCANCODE_X = 27, SDL_SCANCODE_Y = 28,
++    SDL_SCANCODE_Z = 29,
++    SDL_SCANCODE_1 = 30, SDL_SCANCODE_2 = 31, SDL_SCANCODE_3 = 32, SDL_SCANCODE_4 = 33, SDL_SCANCODE_5 = 34,
++    SDL_SCANCODE_6 = 35, SDL_SCANCODE_7 = 36, SDL_SCANCODE_8 = 37, SDL_SCANCODE_9 = 38, SDL_SCANCODE_0 = 39,
++    SDL_SCANCODE_RETURN = 40, SDL_SCANCODE_ESCAPE = 41, SDL_SCANCODE_BACKSPACE = 42, SDL_SCANCODE_TAB = 43,
++    SDL_SCANCODE_SPACE = 44, SDL_SCANCODE_MINUS = 45, SDL_SCANCODE_EQUALS = 46,
++    SDL_SCANCODE_LEFTBRACKET = 47, SDL_SCANCODE_RIGHTBRACKET = 48, SDL_SCANCODE_BACKSLASH = 49,
++    SDL_SCANCODE_SEMICOLON = 51, SDL_SCANCODE_APOSTROPHE = 52, SDL_SCANCODE_GRAVE = 53,
++    SDL_SCANCODE_COMMA = 54, SDL_SCANCODE_PERIOD = 55, SDL_SCANCODE_SLASH = 56, SDL_SCANCODE_CAPSLOCK = 57,
++    SDL_SCANCODE_F1 = 58, SDL_SCANCODE_F2 = 59, SDL_SCANCODE_F3 = 60, SDL_SCANCODE_F4 = 61,
++    SDL_SCANCODE_F5 = 62, SDL_SCANCODE_F6 = 63, SDL_SCANCODE_F7 = 64, SDL_SCANCODE_F8 = 65,
++    SDL_SCANCODE_F9 = 66, SDL_SCANCODE_F10 = 67, SDL_SCANCODE_F11 = 68, SDL_SCANCODE_F12 = 69,
++    SDL_SCANCODE_INSERT = 73, SDL_SCANCODE_HOME = 74, SDL_SCANCODE_PAGEUP = 75, SDL_SCANCODE_DELETE = 76,
++    SDL_SCANCODE_END = 77, SDL_SCANCODE_PAGEDOWN = 78, SDL_SCANCODE_RIGHT = 79, SDL_SCANCODE_LEFT = 80,
++    SDL_SCANCODE_DOWN = 81, SDL_SCANCODE_UP = 82, SDL_SCANCODE_KP_ENTER = 88,
++    SDL_SCANCODE_LCTRL = 224, SDL_SCANCODE_LSHIFT = 225, SDL_SCANCODE_LALT = 226, SDL_SCANCODE_LGUI = 227,
++    SDL_SCANCODE_RCTRL = 228, SDL_SCANCODE_RSHIFT = 229, SDL_SCANCODE_RALT = 230, SDL_SCANCODE_RGUI = 231,
++    SDL_SCANCODE_COUNT = 512
++} SDL_Scancode;
++
++typedef Uint32 SDL_Keycode;
++#define SDLK_SCANCODE_MASK (1u << 30)
++#define SDL_SCANCODE_TO_KEYCODE(X) ((SDL_Keycode)(X) | SDLK_SCANCODE_MASK)
++#define SDLK_UNKNOWN 0x00000000u
++#define SDLK_RETURN 0x0000000du
++#define SDLK_ESCAPE 0x0000001bu
++#define SDLK_BACKSPACE 0x00000008u
++#define SDLK_TAB 0x00000009u
++#define SDLK_SPACE 0x00000020u
++#define SDLK_DELETE 0x0000007fu
++#define SDLK_E 0x00000065u
++#define SDLK_Q 0x00000071u
++#define SDLK_S 0x00000073u
++#define SDLK_W 0x00000077u
++#define SDLK_F11 SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_F11)
++#define SDLK_INSERT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_INSERT)
++#define SDLK_HOME SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_HOME)
++#define SDLK_PAGEUP SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_PAGEUP)
++#define SDLK_END SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_END)
++#define SDLK_PAGEDOWN SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_PAGEDOWN)
++#define SDLK_RIGHT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_RIGHT)
++#define SDLK_LEFT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_LEFT)
++#define SDLK_DOWN SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_DOWN)
++#define SDLK_UP SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_UP)
++#define SDLK_KP_ENTER SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_KP_ENTER)
++#define SDLK_LCTRL SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_LCTRL)
++#define SDLK_LSHIFT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_LSHIFT)
++#define SDLK_LALT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_LALT)
++#define SDLK_RCTRL SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_RCTRL)
++#define SDLK_RSHIFT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_RSHIFT)
++#define SDLK_RALT SDL_SCANCODE_TO_KEYCODE(SDL_SCANCODE_RALT)
++
++typedef Uint16 SDL_Keymod;
++#define SDL_KMOD_NONE 0x0000u
++#define SDL_KMOD_LSHIFT 0x0001u
++#define SDL_KMOD_RSHIFT 0x0002u
++#define SDL_KMOD_LCTRL 0x0040u
++#define SDL_KMOD_RCTRL 0x0080u
++#define SDL_KMOD_LALT 0x0100u
++#define SDL_KMOD_RALT 0x0200u
++#define SDL_KMOD_CTRL (SDL_KMOD_LCTRL | SDL_KMOD_RCTRL)
++#define SDL_KMOD_SHIFT (SDL_KMOD_LSHIFT | SDL_KMOD_RSHIFT)
++#define SDL_KMOD_ALT (SDL_KMOD_LALT | SDL_KMOD_RALT)
++
++const bool *SDL_GetKeyboardState(int *numkeys);
++SDL_Keycode SDL_GetKeyFromName(const char *name);
++SDL_Keycode SDL_GetKeyFromScancode(SDL_Scancode scancode, SDL_Keymod modstate, bool key_event);
++const char *SDL_GetKeyName(SDL_Keycode key);
++SDL_Scancode SDL_GetScancodeFromName(const char *name);
++const char *SDL_GetScancodeName(SDL_Scancode scancode);
++
++/* ---- gamepads (SDL3's enum values: the port keeps them in bit masks) ---- */
++typedef Uint32 SDL_JoystickID;
++typedef struct SDL_Gamepad SDL_Gamepad;
++typedef enum SDL_GamepadType {
++    SDL_GAMEPAD_TYPE_UNKNOWN = 0, SDL_GAMEPAD_TYPE_STANDARD, SDL_GAMEPAD_TYPE_XBOX360,
++    SDL_GAMEPAD_TYPE_XBOXONE, SDL_GAMEPAD_TYPE_PS3, SDL_GAMEPAD_TYPE_PS4, SDL_GAMEPAD_TYPE_PS5,
++    SDL_GAMEPAD_TYPE_COUNT = 11
++} SDL_GamepadType;
++typedef enum SDL_GamepadButton {
++    SDL_GAMEPAD_BUTTON_INVALID = -1,
++    SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH,
++    SDL_GAMEPAD_BUTTON_BACK, SDL_GAMEPAD_BUTTON_GUIDE, SDL_GAMEPAD_BUTTON_START,
++    SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK,
++    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
++    SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
++    SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_MISC1,
++    SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1, SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
++    SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2, SDL_GAMEPAD_BUTTON_LEFT_PADDLE2,
++    SDL_GAMEPAD_BUTTON_TOUCHPAD, SDL_GAMEPAD_BUTTON_MISC2, SDL_GAMEPAD_BUTTON_MISC3,
++    SDL_GAMEPAD_BUTTON_MISC4, SDL_GAMEPAD_BUTTON_MISC5, SDL_GAMEPAD_BUTTON_MISC6,
++    SDL_GAMEPAD_BUTTON_COUNT
++} SDL_GamepadButton;
++typedef enum SDL_GamepadButtonLabel {
++    SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN, SDL_GAMEPAD_BUTTON_LABEL_A, SDL_GAMEPAD_BUTTON_LABEL_B,
++    SDL_GAMEPAD_BUTTON_LABEL_X, SDL_GAMEPAD_BUTTON_LABEL_Y, SDL_GAMEPAD_BUTTON_LABEL_CROSS,
++    SDL_GAMEPAD_BUTTON_LABEL_CIRCLE, SDL_GAMEPAD_BUTTON_LABEL_SQUARE, SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE
++} SDL_GamepadButtonLabel;
++typedef enum SDL_GamepadAxis {
++    SDL_GAMEPAD_AXIS_INVALID = -1, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY,
++    SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY, SDL_GAMEPAD_AXIS_LEFT_TRIGGER,
++    SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_GAMEPAD_AXIS_COUNT
++} SDL_GamepadAxis;
++
++SDL_JoystickID *SDL_GetGamepads(int *count);
++SDL_Gamepad *SDL_OpenGamepad(SDL_JoystickID id);
++void SDL_CloseGamepad(SDL_Gamepad *gamepad);
++bool SDL_GamepadConnected(SDL_Gamepad *gamepad);
++const char *SDL_GetGamepadName(SDL_Gamepad *gamepad);
++SDL_GamepadType SDL_GetGamepadType(SDL_Gamepad *gamepad);
++SDL_GamepadType SDL_GetGamepadTypeForID(SDL_JoystickID id);
++bool SDL_GetGamepadButton(SDL_Gamepad *gamepad, SDL_GamepadButton button);
++Sint16 SDL_GetGamepadAxis(SDL_Gamepad *gamepad, SDL_GamepadAxis axis);
++SDL_GamepadButton SDL_GetGamepadButtonFromString(const char *name);
++const char *SDL_GetGamepadStringForButton(SDL_GamepadButton button);
++SDL_GamepadButtonLabel SDL_GetGamepadButtonLabel(SDL_Gamepad *gamepad, SDL_GamepadButton button);
++SDL_GamepadButtonLabel SDL_GetGamepadButtonLabelForType(SDL_GamepadType type, SDL_GamepadButton button);
++int SDL_GetNumGamepadTouchpads(SDL_Gamepad *gamepad);
++int SDL_GetNumGamepadTouchpadFingers(SDL_Gamepad *gamepad, int touchpad);
++bool SDL_GetGamepadTouchpadFinger(SDL_Gamepad *gamepad, int touchpad, int finger, bool *down,
++                                  float *x, float *y, float *pressure);
++bool SDL_RumbleGamepad(SDL_Gamepad *gamepad, Uint16 low, Uint16 high, Uint32 duration_ms);
++bool SDL_SetGamepadLED(SDL_Gamepad *gamepad, Uint8 red, Uint8 green, Uint8 blue);
++
++/* ---- mouse ---- */
++#define SDL_BUTTON_LEFT 1
++#define SDL_BUTTON_MIDDLE 2
++#define SDL_BUTTON_RIGHT 3
++typedef Uint32 SDL_MouseID;
++
++/* ---- events ---- */
++typedef enum SDL_EventType {
++    SDL_EVENT_FIRST = 0, SDL_EVENT_QUIT = 0x100,
++    SDL_EVENT_WINDOW_RESIZED = 0x206, SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED = 0x207,
++    SDL_EVENT_WINDOW_CLOSE_REQUESTED = 0x210,
++    SDL_EVENT_KEY_DOWN = 0x300, SDL_EVENT_KEY_UP = 0x301, SDL_EVENT_TEXT_INPUT = 0x303,
++    SDL_EVENT_MOUSE_MOTION = 0x400, SDL_EVENT_MOUSE_BUTTON_DOWN = 0x401,
++    SDL_EVENT_MOUSE_BUTTON_UP = 0x402, SDL_EVENT_MOUSE_WHEEL = 0x403,
++    SDL_EVENT_GAMEPAD_AXIS_MOTION = 0x650, SDL_EVENT_GAMEPAD_BUTTON_DOWN = 0x651,
++    SDL_EVENT_GAMEPAD_BUTTON_UP = 0x652
++} SDL_EventType;
++typedef struct SDL_CommonEvent { Uint32 type; Uint32 reserved; Uint64 timestamp; } SDL_CommonEvent;
++typedef struct SDL_KeyboardEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; Uint32 which;
++    SDL_Scancode scancode; SDL_Keycode key; SDL_Keymod mod; Uint16 raw; bool down; bool repeat;
++} SDL_KeyboardEvent;
++typedef struct SDL_TextInputEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; const char *text;
++} SDL_TextInputEvent;
++typedef struct SDL_MouseMotionEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; SDL_MouseID which;
++    Uint32 state; float x, y, xrel, yrel;
++} SDL_MouseMotionEvent;
++typedef struct SDL_MouseButtonEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; SDL_MouseID which;
++    Uint8 button; bool down; Uint8 clicks; Uint8 padding; float x, y;
++} SDL_MouseButtonEvent;
++typedef struct SDL_MouseWheelEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; SDL_MouseID which;
++    float x, y; Uint32 direction; float mouse_x, mouse_y;
++} SDL_MouseWheelEvent;
++typedef struct SDL_GamepadAxisEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_JoystickID which; Uint8 axis;
++    Uint8 padding1, padding2, padding3; Sint16 value; Uint16 padding4;
++} SDL_GamepadAxisEvent;
++typedef struct SDL_GamepadButtonEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_JoystickID which; Uint8 button; bool down;
++    Uint8 padding1, padding2;
++} SDL_GamepadButtonEvent;
++typedef struct SDL_WindowEvent {
++    Uint32 type; Uint32 reserved; Uint64 timestamp; SDL_WindowID windowID; Sint32 data1, data2;
++} SDL_WindowEvent;
++typedef union SDL_Event {
++    Uint32 type;
++    SDL_CommonEvent common;
++    SDL_WindowEvent window;
++    SDL_KeyboardEvent key;
++    SDL_TextInputEvent text;
++    SDL_MouseMotionEvent motion;
++    SDL_MouseButtonEvent button;
++    SDL_MouseWheelEvent wheel;
++    SDL_GamepadAxisEvent gaxis;
++    SDL_GamepadButtonEvent gbutton;
++    Uint8 padding[128];
++} SDL_Event;
++bool SDL_PollEvent(SDL_Event *event);
++
++/* ---- audio ---- */
++typedef Uint32 SDL_AudioDeviceID;
++typedef Uint32 SDL_AudioFormat;
++#define SDL_AUDIO_S16 0x8010u
++#define SDL_AUDIO_F32 0x8120u
++#define SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK ((SDL_AudioDeviceID)0xFFFFFFFFu)
++typedef struct SDL_AudioSpec { SDL_AudioFormat format; int channels; int freq; } SDL_AudioSpec;
++typedef struct SDL_AudioStream SDL_AudioStream;
++typedef void (*SDL_AudioStreamCallback)(void *userdata, SDL_AudioStream *stream, int additional, int total);
++SDL_AudioStream *SDL_OpenAudioDeviceStream(SDL_AudioDeviceID device, const SDL_AudioSpec *spec,
++                                           SDL_AudioStreamCallback callback, void *userdata);
++bool SDL_ResumeAudioStreamDevice(SDL_AudioStream *stream);
++void SDL_DestroyAudioStream(SDL_AudioStream *stream);
++int SDL_GetAudioStreamQueued(SDL_AudioStream *stream);
++bool SDL_PutAudioStreamData(SDL_AudioStream *stream, const void *buf, int len);
++bool SDL_GetAudioDeviceFormat(SDL_AudioDeviceID device, SDL_AudioSpec *spec, int *sample_frames);
++const char *SDL_GetCurrentAudioDriver(void);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/gow3_pc/uwp/sdl/uwp_sdl.cpp b/gow3_pc/uwp/sdl/uwp_sdl.cpp
+new file mode 100644
+index 0000000..def5cdb
+--- /dev/null
++++ b/gow3_pc/uwp/sdl/uwp_sdl.cpp
+@@ -0,0 +1,660 @@
++// gow3 UWP: the SDL3 stand-in (SDL3/SDL.h in this folder) over the UWP app's callbacks
++// (gow3_uwp_host.h). One window (the app's CoreWindow), up to four Windows.Gaming.Input
++// gamepads, the CoreWindow keyboard and XAudio2 voices behind the audio streams.
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <cctype>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <deque>
++#include <map>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <variant>
++
++#include <SDL3/SDL.h>
++#include "../gow3_uwp_host.h"
++
++extern "C" const gow3_uwp_host* gow3_uwp_host_get(void);
++
++namespace {
++
++const gow3_uwp_host* Host() {
++    return gow3_uwp_host_get();
++}
++
++std::mutex g_mutex;
++std::string g_error = "no error";
++SDL_InitFlags g_initialized = 0;
++
++void SetError(const char* message) {
++    std::scoped_lock lock{g_mutex};
++    g_error = message;
++}
++
++// ---- properties ----
++using Value = std::variant<Sint64, bool, std::string, void*>;
++std::map<SDL_PropertiesID, std::map<std::string, Value>> g_properties;
++SDL_PropertiesID g_next_properties = 1;
++
++// ---- window ----
++struct WindowData {
++    SDL_PropertiesID properties = 0;
++    std::string title;
++    bool text_input = false;
++    int last_w = 0, last_h = 0;
++    bool closed_sent = false;
++};
++WindowData* g_window = nullptr;
++constexpr SDL_WindowID WindowId = 1;
++
++void HostWindowSize(int* w, int* h) {
++    int32_t width = 1920, height = 1080;
++    if (const auto* host = Host(); host && host->window_size) {
++        host->window_size(host->ctx, &width, &height);
++    }
++    if (w) *w = width;
++    if (h) *h = height;
++}
++
++// ---- gamepads ----
++struct PadSnapshot {
++    gow3_uwp_gamepad state{};
++    std::chrono::steady_clock::time_point when{};
++};
++PadSnapshot g_pads[4];
++SDL_Gamepad* PadHandle(int index) {
++    return reinterpret_cast<SDL_Gamepad*>(static_cast<uintptr_t>(index + 1));
++}
++int PadIndex(SDL_Gamepad* gamepad) {
++    const auto value = reinterpret_cast<uintptr_t>(gamepad);
++    return value >= 1 && value <= 4 ? int(value - 1) : -1;
++}
++// Snapshots are refreshed at most every millisecond: the pad code asks for every button.
++gow3_uwp_gamepad ReadPad(int index) {
++    gow3_uwp_gamepad out{};
++    if (index < 0 || index > 3) return out;
++    const auto now = std::chrono::steady_clock::now();
++    std::scoped_lock lock{g_mutex};
++    PadSnapshot& snapshot = g_pads[index];
++    if (now - snapshot.when > std::chrono::milliseconds(1)) {
++        gow3_uwp_gamepad state{};
++        if (const auto* host = Host(); host && host->gamepad && host->gamepad(host->ctx, index, &state)) {
++            snapshot.state = state;
++        } else {
++            snapshot.state = gow3_uwp_gamepad{};
++        }
++        snapshot.when = now;
++    }
++    return snapshot.state;
++}
++
++bool ButtonDown(const gow3_uwp_gamepad& pad, int button) {
++    const uint32_t b = pad.buttons;
++    switch (button) {
++    case SDL_GAMEPAD_BUTTON_SOUTH: return b & GOW3_UWP_PAD_A;
++    case SDL_GAMEPAD_BUTTON_EAST: return b & GOW3_UWP_PAD_B;
++    case SDL_GAMEPAD_BUTTON_WEST: return b & GOW3_UWP_PAD_X;
++    case SDL_GAMEPAD_BUTTON_NORTH: return b & GOW3_UWP_PAD_Y;
++    case SDL_GAMEPAD_BUTTON_BACK: return b & GOW3_UWP_PAD_VIEW;
++    case SDL_GAMEPAD_BUTTON_START: return b & GOW3_UWP_PAD_MENU;
++    case SDL_GAMEPAD_BUTTON_LEFT_STICK: return b & GOW3_UWP_PAD_LEFT_THUMB;
++    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: return b & GOW3_UWP_PAD_RIGHT_THUMB;
++    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return b & GOW3_UWP_PAD_LEFT_SHOULDER;
++    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return b & GOW3_UWP_PAD_RIGHT_SHOULDER;
++    case SDL_GAMEPAD_BUTTON_DPAD_UP: return b & GOW3_UWP_PAD_DPAD_UP;
++    case SDL_GAMEPAD_BUTTON_DPAD_DOWN: return b & GOW3_UWP_PAD_DPAD_DOWN;
++    case SDL_GAMEPAD_BUTTON_DPAD_LEFT: return b & GOW3_UWP_PAD_DPAD_LEFT;
++    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: return b & GOW3_UWP_PAD_DPAD_RIGHT;
++    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1: return b & GOW3_UWP_PAD_PADDLE1;
++    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE1: return b & GOW3_UWP_PAD_PADDLE2;
++    case SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2: return b & GOW3_UWP_PAD_PADDLE3;
++    case SDL_GAMEPAD_BUTTON_LEFT_PADDLE2: return b & GOW3_UWP_PAD_PADDLE4;
++    default: return false;
++    }
++}
++
++Sint16 Stick(float v, bool invert) {
++    v = std::clamp(invert ? -v : v, -1.0f, 1.0f);
++    return Sint16(std::lround(v * (v < 0 ? 32768.0f : 32767.0f)));
++}
++Sint16 AxisValue(const gow3_uwp_gamepad& pad, int axis) {
++    switch (axis) {
++    case SDL_GAMEPAD_AXIS_LEFTX: return Stick(pad.left_x, false);
++    case SDL_GAMEPAD_AXIS_LEFTY: return Stick(pad.left_y, true); // SDL: down is positive
++    case SDL_GAMEPAD_AXIS_RIGHTX: return Stick(pad.right_x, false);
++    case SDL_GAMEPAD_AXIS_RIGHTY: return Stick(pad.right_y, true);
++    case SDL_GAMEPAD_AXIS_LEFT_TRIGGER: return Sint16(std::lround(std::clamp(pad.left_trigger, 0.0f, 1.0f) * 32767.0f));
++    case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: return Sint16(std::lround(std::clamp(pad.right_trigger, 0.0f, 1.0f) * 32767.0f));
++    default: return 0;
++    }
++}
++
++const char* const ButtonNames[SDL_GAMEPAD_BUTTON_COUNT] = {
++    "a", "b", "x", "y", "back", "guide", "start", "leftstick", "rightstick", "leftshoulder",
++    "rightshoulder", "dpup", "dpdown", "dpleft", "dpright", "misc1", "paddle1", "paddle2",
++    "paddle3", "paddle4", "touchpad", "misc2", "misc3", "misc4", "misc5", "misc6"};
++
++// ---- keyboard ----
++bool g_keys[SDL_SCANCODE_COUNT];
++
++struct ScancodeName {
++    SDL_Scancode code;
++    const char* name;
++};
++const ScancodeName ScancodeNames[] = {
++    {SDL_SCANCODE_RETURN, "Return"}, {SDL_SCANCODE_ESCAPE, "Escape"},
++    {SDL_SCANCODE_BACKSPACE, "Backspace"}, {SDL_SCANCODE_TAB, "Tab"}, {SDL_SCANCODE_SPACE, "Space"},
++    {SDL_SCANCODE_MINUS, "-"}, {SDL_SCANCODE_EQUALS, "="}, {SDL_SCANCODE_LEFTBRACKET, "["},
++    {SDL_SCANCODE_RIGHTBRACKET, "]"}, {SDL_SCANCODE_BACKSLASH, "\\"}, {SDL_SCANCODE_SEMICOLON, ";"},
++    {SDL_SCANCODE_APOSTROPHE, "'"}, {SDL_SCANCODE_GRAVE, "`"}, {SDL_SCANCODE_COMMA, ","},
++    {SDL_SCANCODE_PERIOD, "."}, {SDL_SCANCODE_SLASH, "/"}, {SDL_SCANCODE_CAPSLOCK, "CapsLock"},
++    {SDL_SCANCODE_F1, "F1"}, {SDL_SCANCODE_F2, "F2"}, {SDL_SCANCODE_F3, "F3"}, {SDL_SCANCODE_F4, "F4"},
++    {SDL_SCANCODE_F5, "F5"}, {SDL_SCANCODE_F6, "F6"}, {SDL_SCANCODE_F7, "F7"}, {SDL_SCANCODE_F8, "F8"},
++    {SDL_SCANCODE_F9, "F9"}, {SDL_SCANCODE_F10, "F10"}, {SDL_SCANCODE_F11, "F11"}, {SDL_SCANCODE_F12, "F12"},
++    {SDL_SCANCODE_INSERT, "Insert"}, {SDL_SCANCODE_HOME, "Home"}, {SDL_SCANCODE_PAGEUP, "PageUp"},
++    {SDL_SCANCODE_DELETE, "Delete"}, {SDL_SCANCODE_END, "End"}, {SDL_SCANCODE_PAGEDOWN, "PageDown"},
++    {SDL_SCANCODE_RIGHT, "Right"}, {SDL_SCANCODE_LEFT, "Left"}, {SDL_SCANCODE_DOWN, "Down"},
++    {SDL_SCANCODE_UP, "Up"}, {SDL_SCANCODE_KP_ENTER, "Keypad Enter"},
++    {SDL_SCANCODE_LCTRL, "Left Ctrl"}, {SDL_SCANCODE_LSHIFT, "Left Shift"}, {SDL_SCANCODE_LALT, "Left Alt"},
++    {SDL_SCANCODE_LGUI, "Left GUI"}, {SDL_SCANCODE_RCTRL, "Right Ctrl"}, {SDL_SCANCODE_RSHIFT, "Right Shift"},
++    {SDL_SCANCODE_RALT, "Right Alt"}, {SDL_SCANCODE_RGUI, "Right GUI"},
++};
++
++const char* ScancodeNameOf(int code) {
++    static char letters[SDL_SCANCODE_0 + 1][2];
++    if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z) {
++        letters[code][0] = char('A' + (code - SDL_SCANCODE_A));
++        return letters[code];
++    }
++    if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_0) {
++        letters[code][0] = code == SDL_SCANCODE_0 ? '0' : char('1' + (code - SDL_SCANCODE_1));
++        return letters[code];
++    }
++    for (const auto& entry : ScancodeNames) {
++        if (entry.code == code) return entry.name;
++    }
++    return "";
++}
++
++SDL_Keycode KeycodeOf(int code) {
++    if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z) return SDL_Keycode('a' + (code - SDL_SCANCODE_A));
++    if (code >= SDL_SCANCODE_1 && code <= SDL_SCANCODE_9) return SDL_Keycode('1' + (code - SDL_SCANCODE_1));
++    switch (code) {
++    case SDL_SCANCODE_0: return '0';
++    case SDL_SCANCODE_RETURN: return SDLK_RETURN;
++    case SDL_SCANCODE_ESCAPE: return SDLK_ESCAPE;
++    case SDL_SCANCODE_BACKSPACE: return SDLK_BACKSPACE;
++    case SDL_SCANCODE_TAB: return SDLK_TAB;
++    case SDL_SCANCODE_SPACE: return SDLK_SPACE;
++    case SDL_SCANCODE_DELETE: return SDLK_DELETE;
++    case SDL_SCANCODE_MINUS: return '-';
++    case SDL_SCANCODE_EQUALS: return '=';
++    case SDL_SCANCODE_LEFTBRACKET: return '[';
++    case SDL_SCANCODE_RIGHTBRACKET: return ']';
++    case SDL_SCANCODE_BACKSLASH: return '\\';
++    case SDL_SCANCODE_SEMICOLON: return ';';
++    case SDL_SCANCODE_APOSTROPHE: return '\'';
++    case SDL_SCANCODE_GRAVE: return '`';
++    case SDL_SCANCODE_COMMA: return ',';
++    case SDL_SCANCODE_PERIOD: return '.';
++    case SDL_SCANCODE_SLASH: return '/';
++    case SDL_SCANCODE_UNKNOWN: return SDLK_UNKNOWN;
++    default: return SDL_SCANCODE_TO_KEYCODE(code);
++    }
++}
++
++SDL_Keymod Modifiers() {
++    SDL_Keymod mod = SDL_KMOD_NONE;
++    if (g_keys[SDL_SCANCODE_LSHIFT]) mod |= SDL_KMOD_LSHIFT;
++    if (g_keys[SDL_SCANCODE_RSHIFT]) mod |= SDL_KMOD_RSHIFT;
++    if (g_keys[SDL_SCANCODE_LCTRL]) mod |= SDL_KMOD_LCTRL;
++    if (g_keys[SDL_SCANCODE_RCTRL]) mod |= SDL_KMOD_RCTRL;
++    if (g_keys[SDL_SCANCODE_LALT]) mod |= SDL_KMOD_LALT;
++    if (g_keys[SDL_SCANCODE_RALT]) mod |= SDL_KMOD_RALT;
++    return mod;
++}
++
++// ---- events: the event pump compares the first gamepad with the last state it reported ----
++std::deque<SDL_Event> g_events;
++gow3_uwp_gamepad g_event_pad{};
++Sint16 g_event_triggers[2]{};
++
++void QueueEvents() {
++    // Window size and close.
++    if (g_window) {
++        int w = 0, h = 0;
++        HostWindowSize(&w, &h);
++        if (w != g_window->last_w || h != g_window->last_h) {
++            g_window->last_w = w;
++            g_window->last_h = h;
++            SDL_Event e{};
++            e.window.type = SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED;
++            e.window.windowID = WindowId;
++            e.window.data1 = w;
++            e.window.data2 = h;
++            g_events.push_back(e);
++        }
++        const auto* host = Host();
++        if (host && host->window_state && (host->window_state(host->ctx) & GOW3_UWP_WINDOW_CLOSED) &&
++            !g_window->closed_sent) {
++            g_window->closed_sent = true;
++            SDL_Event e{};
++            e.window.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
++            e.window.windowID = WindowId;
++            g_events.push_back(e);
++        }
++    }
++    // Keyboard.
++    if (const auto* host = Host(); host && host->key_event) {
++        int32_t code = 0, down = 0;
++        for (int n = 0; n < 64 && host->key_event(host->ctx, &code, &down); ++n) {
++            if (code <= 0 || code >= SDL_SCANCODE_COUNT) continue;
++            const bool repeat = down && g_keys[code];
++            g_keys[code] = down != 0;
++            SDL_Event e{};
++            e.key.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
++            e.key.windowID = WindowId;
++            e.key.scancode = SDL_Scancode(code);
++            e.key.key = KeycodeOf(code);
++            e.key.mod = Modifiers();
++            e.key.down = down != 0;
++            e.key.repeat = repeat;
++            g_events.push_back(e);
++        }
++    }
++    // The first gamepad's buttons and triggers.
++    const gow3_uwp_gamepad pad = ReadPad(0);
++    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; ++b) {
++        const bool now = ButtonDown(pad, b), before = ButtonDown(g_event_pad, b);
++        if (now != before) {
++            SDL_Event e{};
++            e.gbutton.type = now ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
++            e.gbutton.which = 1;
++            e.gbutton.button = Uint8(b);
++            e.gbutton.down = now;
++            g_events.push_back(e);
++        }
++    }
++    for (int t = 0; t < 2; ++t) {
++        const int axis = t ? SDL_GAMEPAD_AXIS_RIGHT_TRIGGER : SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
++        const Sint16 value = AxisValue(pad, axis);
++        if (std::abs(value - g_event_triggers[t]) > 256) {
++            g_event_triggers[t] = value;
++            SDL_Event e{};
++            e.gaxis.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
++            e.gaxis.which = 1;
++            e.gaxis.axis = Uint8(axis);
++            e.gaxis.value = value;
++            g_events.push_back(e);
++        }
++    }
++    g_event_pad = pad;
++}
++
++// ---- audio ----
++struct AudioStreamData {
++    int32_t handle = 0;
++};
++
++const SDL_DisplayMode* DisplayMode() {
++    static SDL_DisplayMode mode{};
++    const auto* host = Host();
++    mode.displayID = 1;
++    mode.w = host && host->display_width > 0 ? host->display_width : 1920;
++    mode.h = host && host->display_height > 0 ? host->display_height : 1080;
++    mode.pixel_density = 1.0f;
++    mode.refresh_rate = host && host->refresh_rate > 0 ? host->refresh_rate : 60.0f;
++    return &mode;
++}
++
++} // namespace
++
++extern "C" {
++
++// ---- init, errors, hints, misc ----
++bool SDL_InitSubSystem(SDL_InitFlags flags) {
++    if (!Host()) {
++        SetError("the UWP app did not register its callbacks (gow3_uwp_set_host)");
++        return false;
++    }
++    std::scoped_lock lock{g_mutex};
++    g_initialized |= flags;
++    return true;
++}
++SDL_InitFlags SDL_WasInit(SDL_InitFlags flags) {
++    std::scoped_lock lock{g_mutex};
++    return flags ? (g_initialized & flags) : g_initialized;
++}
++const char* SDL_GetError(void) {
++    static thread_local std::string copy;
++    std::scoped_lock lock{g_mutex};
++    copy = g_error;
++    return copy.c_str();
++}
++bool SDL_SetHint(const char*, const char*) { return true; }
++void SDL_Delay(Uint32 ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
++void SDL_free(void* memory) { std::free(memory); }
++int SDL_strcasecmp(const char* a, const char* b) {
++    if (!a || !b) return a == b ? 0 : (a ? 1 : -1);
++    for (;; ++a, ++b) {
++        const int x = std::tolower(static_cast<unsigned char>(*a));
++        const int y = std::tolower(static_cast<unsigned char>(*b));
++        if (x != y || !x) return x - y;
++    }
++}
++
++// ---- properties ----
++SDL_PropertiesID SDL_CreateProperties(void) {
++    std::scoped_lock lock{g_mutex};
++    const SDL_PropertiesID id = g_next_properties++;
++    g_properties[id];
++    return id;
++}
++void SDL_DestroyProperties(SDL_PropertiesID props) {
++    std::scoped_lock lock{g_mutex};
++    g_properties.erase(props);
++}
++static bool SetProperty(SDL_PropertiesID props, const char* name, Value value) {
++    if (!name) return false;
++    std::scoped_lock lock{g_mutex};
++    const auto it = g_properties.find(props);
++    if (it == g_properties.end()) return false;
++    it->second[name] = std::move(value);
++    return true;
++}
++bool SDL_SetStringProperty(SDL_PropertiesID props, const char* name, const char* value) {
++    return SetProperty(props, name, std::string(value ? value : ""));
++}
++bool SDL_SetNumberProperty(SDL_PropertiesID props, const char* name, Sint64 value) {
++    return SetProperty(props, name, value);
++}
++bool SDL_SetBooleanProperty(SDL_PropertiesID props, const char* name, bool value) {
++    return SetProperty(props, name, value);
++}
++Sint64 SDL_GetNumberProperty(SDL_PropertiesID props, const char* name, Sint64 fallback) {
++    std::scoped_lock lock{g_mutex};
++    const auto it = g_properties.find(props);
++    if (it == g_properties.end() || !name) return fallback;
++    const auto value = it->second.find(name);
++    if (value == it->second.end()) return fallback;
++    if (const auto* number = std::get_if<Sint64>(&value->second)) return *number;
++    return fallback;
++}
++void* SDL_GetPointerProperty(SDL_PropertiesID props, const char* name, void* fallback) {
++    std::scoped_lock lock{g_mutex};
++    const auto it = g_properties.find(props);
++    if (it == g_properties.end() || !name) return fallback;
++    const auto value = it->second.find(name);
++    if (value == it->second.end()) return fallback;
++    if (auto* const* pointer = std::get_if<void*>(&value->second)) return *pointer;
++    return fallback;
++}
++
++// ---- video ----
++SDL_Window* SDL_CreateWindowWithProperties(SDL_PropertiesID props) {
++    const auto* host = Host();
++    if (!host) {
++        SetError("no UWP host");
++        return nullptr;
++    }
++    if (g_window) {
++        SetError("the UWP app has one window");
++        return nullptr;
++    }
++    auto* window = new WindowData;
++    {
++        std::scoped_lock lock{g_mutex};
++        const auto it = g_properties.find(props);
++        if (it != g_properties.end()) {
++            const auto title = it->second.find(SDL_PROP_WINDOW_CREATE_TITLE_STRING);
++            if (title != it->second.end()) {
++                if (const auto* text = std::get_if<std::string>(&title->second)) window->title = *text;
++            }
++        }
++    }
++    window->properties = SDL_CreateProperties();
++    SetProperty(window->properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, Value{std::in_place_type<void*>, host->hwnd});
++    SetProperty(window->properties, SDL_PROP_WINDOW_WINRT_WINDOW_POINTER, Value{std::in_place_type<void*>, host->core_window});
++    HostWindowSize(&window->last_w, &window->last_h);
++    g_window = window;
++    if (!host->hwnd) {
++        std::fprintf(stderr, "UWP: the CoreWindow has no window handle for the Vulkan surface\n");
++    }
++    return reinterpret_cast<SDL_Window*>(window);
++}
++void SDL_DestroyWindow(SDL_Window* window) {
++    auto* data = reinterpret_cast<WindowData*>(window);
++    if (!data || data != g_window) return;
++    SDL_DestroyProperties(data->properties);
++    g_window = nullptr;
++    delete data;
++}
++SDL_PropertiesID SDL_GetWindowProperties(SDL_Window* window) {
++    auto* data = reinterpret_cast<WindowData*>(window);
++    return data ? data->properties : 0;
++}
++SDL_Window* SDL_GetWindowFromID(SDL_WindowID id) {
++    return id == WindowId ? reinterpret_cast<SDL_Window*>(g_window) : nullptr;
++}
++bool SDL_GetWindowSizeInPixels(SDL_Window*, int* w, int* h) {
++    HostWindowSize(w, h);
++    return true;
++}
++float SDL_GetWindowPixelDensity(SDL_Window*) { return 1.0f; }
++SDL_WindowFlags SDL_GetWindowFlags(SDL_Window*) {
++    const auto* host = Host();
++    const uint32_t state = host && host->window_state ? host->window_state(host->ctx)
++                                                      : GOW3_UWP_WINDOW_FOCUSED | GOW3_UWP_WINDOW_VISIBLE;
++    SDL_WindowFlags flags = SDL_WINDOW_FULLSCREEN;
++    if (state & GOW3_UWP_WINDOW_FOCUSED) flags |= SDL_WINDOW_INPUT_FOCUS;
++    if (!(state & GOW3_UWP_WINDOW_VISIBLE)) flags |= SDL_WINDOW_MINIMIZED;
++    return flags;
++}
++// The CoreWindow always fills the TV: window placement and modes have nothing to change.
++bool SDL_SetWindowFullscreen(SDL_Window*, bool) { return true; }
++bool SDL_SetWindowFullscreenMode(SDL_Window*, const SDL_DisplayMode*) { return true; }
++bool SDL_SyncWindow(SDL_Window*) { return true; }
++bool SDL_SetWindowSize(SDL_Window*, int, int) { return true; }
++bool SDL_SetWindowPosition(SDL_Window*, int, int) { return true; }
++bool SDL_RaiseWindow(SDL_Window*) { return true; }
++bool SDL_SetWindowTitle(SDL_Window* window, const char* title) {
++    if (auto* data = reinterpret_cast<WindowData*>(window)) data->title = title ? title : "";
++    return true;
++}
++bool SDL_SetWindowIcon(SDL_Window*, SDL_Surface*) { return true; }
++bool SDL_SetWindowRelativeMouseMode(SDL_Window*, bool) { return true; }
++SDL_DisplayID SDL_GetDisplayForWindow(SDL_Window*) { return 1; }
++SDL_DisplayID SDL_GetPrimaryDisplay(void) { return 1; }
++bool SDL_GetDisplayUsableBounds(SDL_DisplayID, SDL_Rect* rect) {
++    if (!rect) return false;
++    const SDL_DisplayMode* mode = DisplayMode();
++    *rect = SDL_Rect{0, 0, mode->w, mode->h};
++    return true;
++}
++const SDL_DisplayMode* SDL_GetCurrentDisplayMode(SDL_DisplayID) { return DisplayMode(); }
++const SDL_DisplayMode* SDL_GetDesktopDisplayMode(SDL_DisplayID) { return DisplayMode(); }
++// "windows": window.cpp then hands the Vulkan surface the window handle (ICoreWindowInterop).
++const char* SDL_GetCurrentVideoDriver(void) { return "windows"; }
++SDL_Surface* SDL_LoadBMP(const char*) { return nullptr; }
++void SDL_DestroySurface(SDL_Surface*) {}
++bool SDL_HideCursor(void) { return true; }
++bool SDL_StartTextInput(SDL_Window* window) {
++    if (auto* data = reinterpret_cast<WindowData*>(window)) data->text_input = true;
++    return true;
++}
++bool SDL_StopTextInput(SDL_Window* window) {
++    if (auto* data = reinterpret_cast<WindowData*>(window)) data->text_input = false;
++    return true;
++}
++bool SDL_TextInputActive(SDL_Window* window) {
++    auto* data = reinterpret_cast<WindowData*>(window);
++    return data && data->text_input;
++}
++
++// ---- keyboard ----
++const bool* SDL_GetKeyboardState(int* numkeys) {
++    if (numkeys) *numkeys = SDL_SCANCODE_COUNT;
++    return g_keys;
++}
++SDL_Scancode SDL_GetScancodeFromName(const char* name) {
++    if (!name || !*name) return SDL_SCANCODE_UNKNOWN;
++    for (int code = 1; code < SDL_SCANCODE_COUNT; ++code) {
++        const char* known = ScancodeNameOf(code);
++        if (*known && !SDL_strcasecmp(known, name)) return SDL_Scancode(code);
++    }
++    return SDL_SCANCODE_UNKNOWN;
++}
++const char* SDL_GetScancodeName(SDL_Scancode scancode) { return ScancodeNameOf(scancode); }
++SDL_Keycode SDL_GetKeyFromScancode(SDL_Scancode scancode, SDL_Keymod, bool) { return KeycodeOf(scancode); }
++SDL_Keycode SDL_GetKeyFromName(const char* name) {
++    const SDL_Scancode code = SDL_GetScancodeFromName(name);
++    return code == SDL_SCANCODE_UNKNOWN ? SDLK_UNKNOWN : KeycodeOf(code);
++}
++const char* SDL_GetKeyName(SDL_Keycode key) {
++    if (key == SDLK_UNKNOWN) return "";
++    for (int code = 1; code < SDL_SCANCODE_COUNT; ++code) {
++        if (KeycodeOf(code) == key && *ScancodeNameOf(code)) return ScancodeNameOf(code);
++    }
++    return "";
++}
++
++// ---- gamepads ----
++SDL_JoystickID* SDL_GetGamepads(int* count) {
++    auto* ids = static_cast<SDL_JoystickID*>(std::calloc(5, sizeof(SDL_JoystickID)));
++    int n = 0;
++    for (int i = 0; i < 4 && ids; ++i) {
++        if (ReadPad(i).connected) ids[n++] = SDL_JoystickID(i + 1);
++    }
++    if (count) *count = n;
++    return ids;
++}
++SDL_Gamepad* SDL_OpenGamepad(SDL_JoystickID id) {
++    return id >= 1 && id <= 4 ? PadHandle(int(id) - 1) : nullptr;
++}
++void SDL_CloseGamepad(SDL_Gamepad*) {}
++bool SDL_GamepadConnected(SDL_Gamepad* gamepad) {
++    const int index = PadIndex(gamepad);
++    return index >= 0 && ReadPad(index).connected;
++}
++const char* SDL_GetGamepadName(SDL_Gamepad* gamepad) {
++    return PadIndex(gamepad) >= 0 ? "Xbox Controller" : nullptr;
++}
++SDL_GamepadType SDL_GetGamepadType(SDL_Gamepad* gamepad) {
++    return PadIndex(gamepad) >= 0 ? SDL_GAMEPAD_TYPE_XBOXONE : SDL_GAMEPAD_TYPE_UNKNOWN;
++}
++SDL_GamepadType SDL_GetGamepadTypeForID(SDL_JoystickID id) {
++    return id >= 1 && id <= 4 ? SDL_GAMEPAD_TYPE_XBOXONE : SDL_GAMEPAD_TYPE_UNKNOWN;
++}
++bool SDL_GetGamepadButton(SDL_Gamepad* gamepad, SDL_GamepadButton button) {
++    const int index = PadIndex(gamepad);
++    return index >= 0 && ButtonDown(ReadPad(index), button);
++}
++Sint16 SDL_GetGamepadAxis(SDL_Gamepad* gamepad, SDL_GamepadAxis axis) {
++    const int index = PadIndex(gamepad);
++    return index >= 0 ? AxisValue(ReadPad(index), axis) : 0;
++}
++SDL_GamepadButton SDL_GetGamepadButtonFromString(const char* name) {
++    if (!name) return SDL_GAMEPAD_BUTTON_INVALID;
++    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; ++b) {
++        if (!SDL_strcasecmp(name, ButtonNames[b])) return SDL_GamepadButton(b);
++    }
++    return SDL_GAMEPAD_BUTTON_INVALID;
++}
++const char* SDL_GetGamepadStringForButton(SDL_GamepadButton button) {
++    return button >= 0 && button < SDL_GAMEPAD_BUTTON_COUNT ? ButtonNames[button] : nullptr;
++}
++SDL_GamepadButtonLabel SDL_GetGamepadButtonLabelForType(SDL_GamepadType type, SDL_GamepadButton button) {
++    const bool playstation = type == SDL_GAMEPAD_TYPE_PS3 || type == SDL_GAMEPAD_TYPE_PS4 || type == SDL_GAMEPAD_TYPE_PS5;
++    switch (button) {
++    case SDL_GAMEPAD_BUTTON_SOUTH: return playstation ? SDL_GAMEPAD_BUTTON_LABEL_CROSS : SDL_GAMEPAD_BUTTON_LABEL_A;
++    case SDL_GAMEPAD_BUTTON_EAST: return playstation ? SDL_GAMEPAD_BUTTON_LABEL_CIRCLE : SDL_GAMEPAD_BUTTON_LABEL_B;
++    case SDL_GAMEPAD_BUTTON_WEST: return playstation ? SDL_GAMEPAD_BUTTON_LABEL_SQUARE : SDL_GAMEPAD_BUTTON_LABEL_X;
++    case SDL_GAMEPAD_BUTTON_NORTH: return playstation ? SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE : SDL_GAMEPAD_BUTTON_LABEL_Y;
++    default: return SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
++    }
++}
++SDL_GamepadButtonLabel SDL_GetGamepadButtonLabel(SDL_Gamepad* gamepad, SDL_GamepadButton button) {
++    return SDL_GetGamepadButtonLabelForType(SDL_GetGamepadType(gamepad), button);
++}
++int SDL_GetNumGamepadTouchpads(SDL_Gamepad*) { return 0; }
++int SDL_GetNumGamepadTouchpadFingers(SDL_Gamepad*, int) { return 0; }
++bool SDL_GetGamepadTouchpadFinger(SDL_Gamepad*, int, int, bool* down, float*, float*, float*) {
++    if (down) *down = false;
++    return false;
++}
++bool SDL_RumbleGamepad(SDL_Gamepad* gamepad, Uint16 low, Uint16 high, Uint32 duration_ms) {
++    const int index = PadIndex(gamepad);
++    const auto* host = Host();
++    if (index < 0 || !host || !host->rumble) return false;
++    host->rumble(host->ctx, index, low / 65535.0f, high / 65535.0f, duration_ms);
++    return true;
++}
++bool SDL_SetGamepadLED(SDL_Gamepad*, Uint8, Uint8, Uint8) { return false; }
++
++// ---- events ----
++bool SDL_PollEvent(SDL_Event* event) {
++    if (g_events.empty()) {
++        QueueEvents();
++    }
++    if (g_events.empty()) return false;
++    if (event) *event = g_events.front();
++    g_events.pop_front();
++    return true;
++}
++
++// ---- audio ----
++SDL_AudioStream* SDL_OpenAudioDeviceStream(SDL_AudioDeviceID, const SDL_AudioSpec* spec,
++                                           SDL_AudioStreamCallback, void*) {
++    const auto* host = Host();
++    if (!spec || !host || !host->audio_open) {
++        SetError("no UWP audio");
++        return nullptr;
++    }
++    const int32_t handle = host->audio_open(host->ctx, spec->channels, spec->format == SDL_AUDIO_F32,
++                                            spec->freq);
++    if (handle <= 0) {
++        SetError("XAudio2 voice could not be created");
++        return nullptr;
++    }
++    auto* stream = new AudioStreamData;
++    stream->handle = handle;
++    return reinterpret_cast<SDL_AudioStream*>(stream);
++}
++bool SDL_ResumeAudioStreamDevice(SDL_AudioStream*) { return true; }
++void SDL_DestroyAudioStream(SDL_AudioStream* stream) {
++    auto* data = reinterpret_cast<AudioStreamData*>(stream);
++    if (!data) return;
++    if (const auto* host = Host(); host && host->audio_close) host->audio_close(host->ctx, data->handle);
++    delete data;
++}
++int SDL_GetAudioStreamQueued(SDL_AudioStream* stream) {
++    auto* data = reinterpret_cast<AudioStreamData*>(stream);
++    const auto* host = Host();
++    return data && host && host->audio_queued ? host->audio_queued(host->ctx, data->handle) : 0;
++}
++bool SDL_PutAudioStreamData(SDL_AudioStream* stream, const void* buf, int len) {
++    auto* data = reinterpret_cast<AudioStreamData*>(stream);
++    const auto* host = Host();
++    if (!data || !host || !host->audio_put || !buf || len <= 0) return false;
++    host->audio_put(host->ctx, data->handle, buf, len);
++    return true;
++}
++bool SDL_GetAudioDeviceFormat(SDL_AudioDeviceID, SDL_AudioSpec* spec, int* sample_frames) {
++    const auto* host = Host();
++    if (!host) return false;
++    if (spec) {
++        spec->format = SDL_AUDIO_F32;
++        spec->channels = host->audio_device_channels ? host->audio_device_channels(host->ctx) : 2;
++        spec->freq = 48000;
++    }
++    if (sample_frames) *sample_frames = 480;
++    return true;
++}
++const char* SDL_GetCurrentAudioDriver(void) { return "xaudio2"; }
++
++} // extern "C"
+diff --git a/gow3_pc/uwp/uwp_entry.c b/gow3_pc/uwp/uwp_entry.c
+new file mode 100644
+index 0000000..86b2be9
+--- /dev/null
++++ b/gow3_pc/uwp/uwp_entry.c
+@@ -0,0 +1,70 @@
++/* gow3 UWP: what gow3-runtime.dll exports to the UWP app (gow3_uwp_host.h).
++ *
++ * The desktop build is gow3-probe.exe, started by tools/probe_tlou.py with a command line and an
++ * environment. A packaged app cannot start processes, so the same program is a DLL here: the app
++ * sets the environment with gow3_uwp_setenv and calls gow3_uwp_run with the command line the PC
++ * staging step wrote (tools/probe_tlou.py --stage). probe.c's main is compiled as
++ * gow3_probe_main for this build (CMakeLists.txt). */
++#if defined(_WIN32) && defined(GOW3_UWP)
++#include <windows.h>
++#include <io.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "gow3_uwp_host.h"
++
++#define EXPORT __declspec(dllexport)
++
++int gow3_probe_main(int argc, char **argv);
++
++static gow3_uwp_host host_table;
++static int host_set;
++
++const gow3_uwp_host *gow3_uwp_host_get(void) { return host_set ? &host_table : NULL; }
++
++EXPORT int32_t gow3_uwp_api_version(void) { return GOW3_UWP_HOST_VERSION; }
++
++EXPORT void gow3_uwp_set_host(const gow3_uwp_host *host) {
++    if (!host || host->version != GOW3_UWP_HOST_VERSION) return;
++    host_table = *host;
++    host_set = 1;
++}
++
++/* Both the CRT's environment (getenv) and the process's (GetEnvironmentVariable): the runtime
++ * reads the first, Vulkan drivers and libraries may read the second. */
++EXPORT int32_t gow3_uwp_setenv(const char *name, const char *value) {
++    if (!name || !*name) return -1;
++    if (_putenv_s(name, value ? value : "")) return -1;
++    wchar_t wname[256], wvalue[4096];
++    if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wname, 256) &&
++        MultiByteToWideChar(CP_UTF8, 0, value ? value : "", -1, wvalue, 4096))
++        SetEnvironmentVariableW(wname, value && *value ? wvalue : NULL);
++    return 0;
++}
++
++EXPORT int32_t gow3_uwp_run(int32_t argc, const char *const *argv, const char *log_path) {
++    if (argc < 2 || !argv) return 2;
++    /* No console in an app: the game's output goes to the log the app shows on failure. */
++    if (log_path && *log_path) {
++        if (freopen(log_path, "w", stdout)) {
++            setvbuf(stdout, NULL, _IOLBF, 0);
++            /* stderr into the same file, unbuffered, as `> boot.log 2>&1` does on the PC. */
++            _dup2(_fileno(stdout), _fileno(stderr));
++            setvbuf(stderr, NULL, _IONBF, 0);
++        }
++    }
++    printf("UWP: gow3-runtime starting (%d arguments)\n", argc);
++    char **copy = calloc((size_t)argc + 1, sizeof(*copy));
++    if (!copy) return 3;
++    for (int i = 0; i < argc; ++i) copy[i] = _strdup(argv[i] ? argv[i] : "");
++    int code = gow3_probe_main(argc, copy);
++    printf("UWP: gow3-runtime returned %d\n", code);
++    fflush(stdout);
++    return code;
++}
++
++BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
++    (void)instance; (void)reason; (void)reserved;
++    return TRUE;
++}
++#endif
+diff --git a/gow3_pc/uwp/uwp_platform.c b/gow3_pc/uwp/uwp_platform.c
+new file mode 100644
+index 0000000..be3f498
+--- /dev/null
++++ b/gow3_pc/uwp/uwp_platform.c
+@@ -0,0 +1,193 @@
++/* gow3 UWP: the app-container versions of the Win32 calls the runtime makes (uwp_platform.h). */
++#if defined(_WIN32) && defined(GOW3_UWP)
++#include <windows.h>
++#include <stdio.h>
++#include <string.h>
++#include <wchar.h>
++#include "uwp_platform.h"
++
++/* The *FromApp functions live in kernelbase (api-ms-win-core-memory-l1-1-*); not every MinGW
++ * import library has all of them, so they are looked up once at run time. */
++typedef PVOID (WINAPI *VirtualAllocFromAppFn)(PVOID, SIZE_T, ULONG, ULONG);
++typedef BOOL (WINAPI *VirtualProtectFromAppFn)(PVOID, SIZE_T, ULONG, PULONG);
++typedef PVOID (WINAPI *VirtualAlloc2FromAppFn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER *, ULONG);
++typedef PVOID (WINAPI *MapViewOfFile3FromAppFn)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG,
++                                                MEM_EXTENDED_PARAMETER *, ULONG);
++typedef HANDLE (WINAPI *CreateFileMappingFromAppFn)(HANDLE, PSECURITY_ATTRIBUTES, ULONG, ULONG64, PCWSTR);
++typedef HMODULE (WINAPI *LoadPackagedLibraryFn)(LPCWSTR, DWORD);
++
++static struct {
++    VirtualAllocFromAppFn virtual_alloc;
++    VirtualProtectFromAppFn virtual_protect;
++    VirtualAlloc2FromAppFn virtual_alloc2;
++    MapViewOfFile3FromAppFn map_view3;
++    CreateFileMappingFromAppFn create_file_mapping;
++    LoadPackagedLibraryFn load_packaged;
++} api;
++static INIT_ONCE api_once = INIT_ONCE_STATIC_INIT;
++
++static FARPROC lookup(const char *name) {
++    static const wchar_t *const modules[] = {L"kernelbase.dll", L"kernel32.dll"};
++    for (size_t i = 0; i < sizeof(modules) / sizeof(*modules); ++i) {
++        HMODULE module = GetModuleHandleW(modules[i]);
++        FARPROC p = module ? GetProcAddress(module, name) : NULL;
++        if (p) return p;
++    }
++    fprintf(stderr, "UWP: %s is not available\n", name);
++    return NULL;
++}
++static BOOL CALLBACK resolve(PINIT_ONCE once, PVOID parameter, PVOID *context) {
++    (void)once; (void)parameter; (void)context;
++    api.virtual_alloc = (VirtualAllocFromAppFn)(void (*)(void))lookup("VirtualAllocFromApp");
++    api.virtual_protect = (VirtualProtectFromAppFn)(void (*)(void))lookup("VirtualProtectFromApp");
++    api.virtual_alloc2 = (VirtualAlloc2FromAppFn)(void (*)(void))lookup("VirtualAlloc2FromApp");
++    api.map_view3 = (MapViewOfFile3FromAppFn)(void (*)(void))lookup("MapViewOfFile3FromApp");
++    api.create_file_mapping = (CreateFileMappingFromAppFn)(void (*)(void))lookup("CreateFileMappingFromApp");
++    api.load_packaged = (LoadPackagedLibraryFn)(void (*)(void))lookup("LoadPackagedLibrary");
++    return TRUE;
++}
++static void need_api(void) { InitOnceExecuteOnce(&api_once, resolve, NULL, NULL); }
++
++static PVOID VirtualAllocFromApp_(PVOID a, SIZE_T s, ULONG t, ULONG p) {
++    need_api();
++    if (!api.virtual_alloc) { SetLastError(ERROR_PROC_NOT_FOUND); return NULL; }
++    return api.virtual_alloc(a, s, t, p);
++}
++static BOOL VirtualProtectFromApp_(PVOID a, SIZE_T s, ULONG p, PULONG old) {
++    need_api();
++    if (!api.virtual_protect) { SetLastError(ERROR_PROC_NOT_FOUND); return FALSE; }
++    return api.virtual_protect(a, s, p, old);
++}
++static PVOID VirtualAlloc2FromApp_(HANDLE h, PVOID a, SIZE_T s, ULONG t, ULONG p, MEM_EXTENDED_PARAMETER *x, ULONG n) {
++    need_api();
++    if (!api.virtual_alloc2) { SetLastError(ERROR_PROC_NOT_FOUND); return NULL; }
++    return api.virtual_alloc2(h, a, s, t, p, x, n);
++}
++static PVOID MapViewOfFile3FromApp_(HANDLE f, HANDLE h, PVOID a, ULONG64 o, SIZE_T s, ULONG t, ULONG p,
++                                    MEM_EXTENDED_PARAMETER *x, ULONG n) {
++    need_api();
++    if (!api.map_view3) { SetLastError(ERROR_PROC_NOT_FOUND); return NULL; }
++    return api.map_view3(f, h, a, o, s, t, p, x, n);
++}
++static HANDLE CreateFileMappingFromApp_(HANDLE f, PSECURITY_ATTRIBUTES sa, ULONG p, ULONG64 m, PCWSTR name) {
++    need_api();
++    if (!api.create_file_mapping) { SetLastError(ERROR_PROC_NOT_FOUND); return NULL; }
++    return api.create_file_mapping(f, sa, p, m, name);
++}
++static HMODULE LoadPackagedLibrary_(LPCWSTR name, DWORD reserved) {
++    need_api();
++    /* Outside a package (a desktop test of this DLL) LoadPackagedLibrary fails: LoadLibraryExW then. */
++    HMODULE m = api.load_packaged ? api.load_packaged(name, reserved) : NULL;
++    return m ? m : LoadLibraryExW(name, NULL, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
++}
++#define VirtualAllocFromApp VirtualAllocFromApp_
++#define VirtualProtectFromApp VirtualProtectFromApp_
++#define VirtualAlloc2FromApp VirtualAlloc2FromApp_
++#define MapViewOfFile3FromApp MapViewOfFile3FromApp_
++#define CreateFileMappingFromApp CreateFileMappingFromApp_
++#define LoadPackagedLibrary LoadPackagedLibrary_
++
++/* Write and execute at once is what an app container is most likely to refuse, even with
++ * codeGeneration: such requests are retried as execute-read, and reported once. */
++static void report_wx(const char *what, DWORD error) {
++    static volatile LONG reported;
++    if (!InterlockedExchange(&reported, 1))
++        fprintf(stderr, "UWP: %s refused write+execute pages (error %lu): using execute-read\n", what, error);
++}
++static ULONG without_write(ULONG protect) {
++    switch (protect & 0xff) {
++    case PAGE_EXECUTE_READWRITE: case PAGE_EXECUTE_WRITECOPY:
++        return (protect & ~0xffu) | PAGE_EXECUTE_READ;
++    default: return protect;
++    }
++}
++
++PVOID gow3_uwp_virtual_alloc(PVOID address, SIZE_T size, DWORD type, DWORD protect) {
++    PVOID p = VirtualAllocFromApp(address, size, type, protect);
++    if (!p && without_write(protect) != protect) {
++        report_wx("VirtualAllocFromApp", GetLastError());
++        p = VirtualAllocFromApp(address, size, type, without_write(protect));
++    }
++    return p;
++}
++
++BOOL gow3_uwp_virtual_protect(PVOID address, SIZE_T size, DWORD protect, PDWORD old) {
++    ULONG previous = 0;
++    BOOL ok = VirtualProtectFromApp(address, size, protect, &previous);
++    if (!ok && without_write(protect) != protect) {
++        report_wx("VirtualProtectFromApp", GetLastError());
++        ok = VirtualProtectFromApp(address, size, without_write(protect), &previous);
++    }
++    if (old) *old = previous;
++    return ok;
++}
++
++PVOID gow3_uwp_virtual_alloc2(HANDLE process, PVOID base, SIZE_T size, ULONG type, ULONG protect,
++                              MEM_EXTENDED_PARAMETER *parameters, ULONG count) {
++    PVOID p = VirtualAlloc2FromApp(process, base, size, type, protect, parameters, count);
++    if (!p && without_write(protect) != protect) {
++        report_wx("VirtualAlloc2FromApp", GetLastError());
++        p = VirtualAlloc2FromApp(process, base, size, type, without_write(protect), parameters, count);
++    }
++    return p;
++}
++
++PVOID gow3_uwp_map_view3(HANDLE section, HANDLE process, PVOID base, ULONG64 offset, SIZE_T size,
++                         ULONG type, ULONG protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count) {
++    PVOID p = MapViewOfFile3FromApp(section, process, base, offset, size, type, protect, parameters, count);
++    if (!p && without_write(protect) != protect) {
++        report_wx("MapViewOfFile3FromApp", GetLastError());
++        p = MapViewOfFile3FromApp(section, process, base, offset, size, type, without_write(protect),
++                                  parameters, count);
++    }
++    return p;
++}
++
++/* The desktop build asks CreateFileMapping2 for a pagefile-backed SEC_RESERVE section. The app
++ * version has no extended parameters: the allocation attributes go with the page protection. */
++HANDLE gow3_uwp_create_file_mapping2(HANDLE file, SECURITY_ATTRIBUTES *attributes, ULONG access,
++                                     ULONG protect, ULONG allocation, ULONG64 maximum, PCWSTR name,
++                                     MEM_EXTENDED_PARAMETER *parameters, ULONG count) {
++    (void)access; (void)parameters; (void)count;
++    HANDLE h = CreateFileMappingFromApp(file, attributes, protect | allocation, maximum, name);
++    if (!h && (protect & 0xff) == PAGE_EXECUTE_READWRITE) {
++        /* Guest code runs from the loaded image, not from direct memory: a read-write section
++         * still serves the game's data. */
++        fprintf(stderr, "UWP: executable section refused (error %lu): guest memory is read-write only\n",
++                GetLastError());
++        h = CreateFileMappingFromApp(file, attributes, PAGE_READWRITE | allocation, maximum, name);
++    }
++    return h;
++}
++
++/* Packaged apps load DLLs from their package only: a bare file name, looked up in the package. */
++HMODULE gow3_uwp_load_library_w(LPCWSTR name) {
++    if (!name) return NULL;
++    const wchar_t *base = name;
++    for (const wchar_t *c = name; *c; ++c)
++        if (*c == L'\\' || *c == L'/') base = c + 1;
++    HMODULE module = LoadPackagedLibrary(base, 0);
++    /* vulkan-1.dll: the package may carry a driver under another name (GOW3_VULKAN_DLL). */
++    if (!module && !_wcsicmp(base, L"vulkan-1.dll")) {
++        wchar_t chosen[MAX_PATH];
++        if (GetEnvironmentVariableW(L"GOW3_VULKAN_DLL", chosen, MAX_PATH))
++            module = LoadPackagedLibrary(chosen, 0);
++    }
++    return module;
++}
++
++HMODULE gow3_uwp_load_library_a(LPCSTR name) {
++    if (!name) return NULL;
++    wchar_t wide[MAX_PATH];
++    if (!MultiByteToWideChar(CP_UTF8, 0, name, -1, wide, MAX_PATH)) return NULL;
++    return gow3_uwp_load_library_w(wide);
++}
++
++/* GetProcAddress for C++ files that keep <windows.h> out (vk_platform.cpp). */
++void *gow3_uwp_get_proc(void *module, const char *name) {
++    return module && name ? (void *)GetProcAddress((HMODULE)module, name) : NULL;
++}
++
++extern IMAGE_DOS_HEADER __ImageBase;
++HMODULE gow3_uwp_self_module(void) { return (HMODULE)&__ImageBase; }
++#endif
+diff --git a/gow3_pc/uwp/uwp_platform.h b/gow3_pc/uwp/uwp_platform.h
+new file mode 100644
+index 0000000..caa334d
+--- /dev/null
++++ b/gow3_pc/uwp/uwp_platform.h
+@@ -0,0 +1,43 @@
++/* gow3 UWP: Win32 calls the app container refuses, routed to the ones it allows.
++ *
++ * Include after <windows.h>, only in builds with GOW3_UWP. The memory calls go to the *FromApp
++ * variants (the package declares the codeGeneration capability, which is what lets them map
++ * executable pages); calls with no app-container equivalent (process creation, the multimedia
++ * timer, performance counters) become no-ops that report failure. */
++#pragma once
++#if defined(_WIN32) && defined(GOW3_UWP)
++#include <windows.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++PVOID gow3_uwp_virtual_alloc(PVOID address, SIZE_T size, DWORD type, DWORD protect);
++BOOL gow3_uwp_virtual_protect(PVOID address, SIZE_T size, DWORD protect, PDWORD old);
++PVOID gow3_uwp_virtual_alloc2(HANDLE process, PVOID base, SIZE_T size, ULONG type, ULONG protect,
++                              MEM_EXTENDED_PARAMETER *parameters, ULONG count);
++PVOID gow3_uwp_map_view3(HANDLE section, HANDLE process, PVOID base, ULONG64 offset, SIZE_T size,
++                         ULONG type, ULONG protect, MEM_EXTENDED_PARAMETER *parameters, ULONG count);
++HANDLE gow3_uwp_create_file_mapping2(HANDLE file, SECURITY_ATTRIBUTES *attributes, ULONG access,
++                                     ULONG protect, ULONG allocation, ULONG64 maximum, PCWSTR name,
++                                     MEM_EXTENDED_PARAMETER *parameters, ULONG count);
++HMODULE gow3_uwp_load_library_w(LPCWSTR name);
++HMODULE gow3_uwp_load_library_a(LPCSTR name);
++/* The runtime DLL itself, where the desktop build asked for the executable (GetModuleHandle(NULL)). */
++HMODULE gow3_uwp_self_module(void);
++void *gow3_uwp_get_proc(void *module, const char *name);
++
++#ifdef __cplusplus
++}
++#endif
++
++#define VirtualAlloc gow3_uwp_virtual_alloc
++#define VirtualProtect gow3_uwp_virtual_protect
++#define VirtualAlloc2 gow3_uwp_virtual_alloc2
++#define MapViewOfFile3 gow3_uwp_map_view3
++#define CreateFileMapping2 gow3_uwp_create_file_mapping2
++#undef LoadLibraryW
++#undef LoadLibraryA
++#define LoadLibraryW gow3_uwp_load_library_w
++#define LoadLibraryA gow3_uwp_load_library_a
++#endif
+diff --git a/tools/probe_tlou.py b/tools/probe_tlou.py
+index f8ed7e8..255ab96 100644
+--- a/tools/probe_tlou.py
++++ b/tools/probe_tlou.py
+@@ -382,6 +382,54 @@ def image_patches(elf_path, out_path, patches, applied=None):
+     return out_path
+ 
+ 
++def stage_bundle(stage, command, env, game, update, out, saves, user):
++    """--stage: what the UWP app (Xbox Developer Mode) needs to start the game, written to `stage`.
++
++    The preparation (prepare.py, link_modules.py, the patches) runs here on the PC, as for a normal
++    start; the console cannot run Python. The prepared files are copied to `stage` with boot.json,
++    the runtime's command line and environment with the folders as placeholders the app fills in:
++    ${STAGE} (this folder), ${GAME}, ${UPDATE} (the game and its update on the console) and ${USER}
++    (saves, settings and the shader cache, in the app's own storage)."""
++    stage = Path(stage).resolve()
++    stage.mkdir(parents=True, exist_ok=True)
++    replacements = [(str(out), "${STAGE}"), (str(saves), "${USER}"), (str(user), "${USER}"),
++                    (str(game), "${GAME}")]
++    if update:
++        replacements.insert(0, (str(update), "${UPDATE}"))
++    files = []
++
++    def placeholder(value):
++        value = str(value)
++        path = Path(value)
++        if path.is_file() and out in path.resolve().parents:
++            shutil.copy2(path, stage / path.name)
++            files.append(path.name)
++            return "${STAGE}/" + path.name
++        for prefix, token in replacements:
++            if value == prefix or value.startswith(prefix + os.sep) or value.startswith(prefix + "/"):
++                return token + value[len(prefix):].replace(os.sep, "/")
++        return value
++
++    args = ["gow3-runtime"] + [placeholder(a) for a in command[1:]]
++    skipped = {"GOW3_PAD_RECORD", "GOW3_RESTART_COMMAND", "GOW3_WINDOW_ICON", "GOW3_DUMP_DIR",
++               "GOW3_FRAME_DUMP_TRIGGER"}
++    stage_env = {k: placeholder(v) for k, v in sorted(env.items())
++                 if k.startswith(("GOW3_", "TLOU_")) and k not in skipped and os.environ.get(k) != v
++                 or k in ("GOW3_CONFIG", "GOW3_GPU_USER_DIR", "GOW3_GPU_CACHE_DIR")}
++    stage_env = {k: v for k, v in stage_env.items() if k not in skipped}
++    # The shader cache lives in the app's storage, whatever folder the PC uses.
++    stage_env["GOW3_GPU_CACHE_DIR"] = "${USER}/cache"
++    bundle = {"format": 1, "title": "The Last of Us Remastered", "serial": "CUSA00552",
++              "game_version": app_version(update or game), "has_update": bool(update),
++              "made": time.strftime("%Y-%m-%d %H:%M:%S"), "args": args, "env": stage_env,
++              "files": sorted(set(files))}
++    (stage / "boot.json").write_text(json.dumps(bundle, indent=2), encoding="utf-8")
++    print(f"Staged for the UWP app: {stage} ({len(files)} files, {len(args)} arguments)")
++    print("Copy this folder to the console as TLOU/stage, next to TLOU/CUSA00552"
++          + (" and TLOU/CUSA00552-patch" if update else "") + " (see uwp-app/README.md).")
++    return 0
++
++
+ def game_executable():
+     built = ROOT / "gow3_pc/out/gow3-probe.exe"
+     if not built.is_file():
+@@ -397,10 +445,19 @@ def main():
+     parser.add_argument("--seconds", type=int, default=60, help="Process time limit; 0 disables it")
+     parser.add_argument("--capture", type=int, default=0, metavar="SECONDS",
+                         help="Save the displayed frame every SECONDS (analysis/tlou/captures)")
++    parser.add_argument("--stage", type=Path, default=None, metavar="FOLDER",
++                        help="Prepare everything for the UWP app (Xbox) into FOLDER instead of "
++                             "starting the game (boot.json and the prepared files)")
+     parser.add_argument("--saves", type=Path, default=None,
+                         help="Saves and game settings folder (default analysis/tlou-user, the "
+                              "player's): a test profile leaves the player's saves alone")
+     args = parser.parse_args()
++    if args.stage:
++        # The console's CPU (Zen 2) has every instruction the game uses: no ISA emulation from
++        # the staging PC's CPU. The pad recording is the console session's business.
++        os.environ.setdefault("TLOU_ISA_REWRITE", "off")
++        os.environ.setdefault("TLOU_RECORD_PAD", "0")
++        args.boot = True
+     game = args.game.resolve()
+     update = find_update(game)
+     if update:
+@@ -573,7 +630,8 @@ def main():
+     if os.environ.get("TLOU_GPU_CHECKPOINTS") == "1":
+         env.setdefault("GOW3_GPU_CHECKPOINTS", "1")
+ 
+-    command = [str(game_executable()), str(out / "boot-linked.bin"),
++    # --stage needs no runtime build on the PC: the console has its own (gow3-runtime.dll).
++    command = [str(game_executable()) if not args.stage else "gow3-runtime", str(out / "boot-linked.bin"),
+                "--no-game-hooks", "--low-image", "--content-profile", str(out / "content.bin"),
+                "--app0", str(game), "--user", str(saves)]
+     if update:
+@@ -630,6 +688,10 @@ def main():
+           + (f" ({extra} MiB more for its render targets)" if extra else ""), flush=True)
+     if red_zone:
+         command += ["--red-zone", str(red_zone)]
++    if args.stage:
++        if args.cpu_only:
++            command.append("--cpu-only")
++        return stage_bundle(args.stage, command, env, game, update, out, saves, user)
+     if not args.boot:
+         command.append("--check-imports")
+     if args.cpu_only:
