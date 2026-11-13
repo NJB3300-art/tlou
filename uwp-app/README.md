@@ -72,6 +72,12 @@ settings (`tlou.ini`), the shader cache and `boot.log` are in the app's `LocalSt
   missing on the console.
 - No mouse, no touchpad; keyboard input works when a keyboard is connected.
 
+## If nothing happens
+
+The app writes `app.log` (each start, each step, what failed) and the game writes `boot.log`,
+both in its `LocalState` folder: Device Portal → File explorer → LocalAppData → the app → LocalState.
+When the game stops with an error the app closes; the next start shows the end of `boot.log`.
+
 ## Build it yourself
 
 The workflow `.github/workflows/build-tlou-uwp.yml` does all of it on `windows-2022` at every push to `main`:

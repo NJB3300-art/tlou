@@ -22,6 +22,32 @@ struct __declspec(uuid("45D64A29-A63E-4CB6-B498-5781D298CB4F")) ICoreWindowInter
     virtual HRESULT STDMETHODCALLTYPE put_MessageHandled(unsigned char value) = 0;
 };
 
+// LocalState\app.log: every start, each step and what failed (Device Portal > File explorer).
+std::mutex g_log_mutex;
+fs::path LogFile() {
+    static const fs::path file = [] {
+        try {
+            return fs::path(std::wstring(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+                   L"app.log";
+        } catch (...) {
+            return fs::path();
+        }
+    }();
+    return file;
+}
+void AppLog(const std::string& line) {
+    OutputDebugStringA(("TLOU.Uwp: " + line + "\n").c_str());
+    const fs::path file = LogFile();
+    if (file.empty()) return;
+    std::scoped_lock lock{g_log_mutex};
+    std::ofstream out(file, std::ios::binary | std::ios::app);
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    char stamp[32];
+    sprintf_s(stamp, "%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    out << stamp << line << "\n";
+}
+
 constexpr wchar_t AppTitle[] = L"The Last of Us Remastered — UWP";
 
 enum class Item { Play, Location, MotionBlur, ContactShadows, BackgroundShaders, DrawPipe, FrameStats, VulkanDriver, Exit, Count };
@@ -55,8 +81,14 @@ public:
         const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0};
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
-        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels, ARRAYSIZE(levels),
-                                     D3D11_SDK_VERSION, &device, nullptr, &context))) {
+        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels, ARRAYSIZE(levels),
+                                       D3D11_SDK_VERSION, &device, nullptr, &context);
+        if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels + 1,
+                                               ARRAYSIZE(levels) - 1, D3D11_SDK_VERSION, &device, nullptr, &context);
+        if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, levels + 1,
+                                               ARRAYSIZE(levels) - 1, D3D11_SDK_VERSION, &device, nullptr, &context);
+        if (FAILED(hr)) {
+            AppLog("launcher: D3D11CreateDevice failed, hr=" + std::to_string(hr));
             return false;
         }
         d3d = device;
@@ -75,8 +107,9 @@ public:
         desc.BufferCount = 2;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
         desc.Scaling = DXGI_SCALING_STRETCH;
-        if (FAILED(factory->CreateSwapChainForCoreWindow(d3d.Get(), winrt::get_unknown(window), &desc, nullptr,
-                                                         &swap_chain))) {
+        hr = factory->CreateSwapChainForCoreWindow(d3d.Get(), winrt::get_unknown(window), &desc, nullptr, &swap_chain);
+        if (FAILED(hr)) {
+            AppLog("launcher: CreateSwapChainForCoreWindow failed, hr=" + std::to_string(hr));
             return false;
         }
         D2D1_FACTORY_OPTIONS options{};
@@ -270,6 +303,17 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
     void Uninitialize() {}
 
     void Run() {
+        try {
+            RunLauncher();
+        } catch (const winrt::hresult_error& e) {
+            AppLog("launcher stopped: " + winrt::to_string(e.message()));
+        } catch (const std::exception& e) {
+            AppLog(std::string("launcher stopped: ") + e.what());
+        }
+    }
+
+    void RunLauncher() {
+        AppLog("start");
         local_state = fs::path(std::wstring(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
         install_dir = fs::path(std::wstring(Package::Current().InstalledLocation().Path()));
         user_dir = local_state / L"user";
@@ -280,8 +324,16 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         input = std::make_unique<tlou::Input>();
         audio = std::make_unique<tlou::Audio>();
         FindGame();
+        AppLog("game folders found: " + std::to_string(roots.size()) +
+               (stage.has_stage ? ", stage ready" : ", no stage"));
+        // The game closes the app when it stops with an error: show how the last run ended.
+        if (fs::exists(local_state / L"boot.log", ignored)) {
+            for (const auto& line : tlou::TailLines(local_state / L"boot.log", 14)) log_tail.push_back(tlou::Wide(line));
+            if (!log_tail.empty()) status = L"The last game run ended like this (boot.log):";
+        }
 
-        if (!launcher.Create(core_window)) status = L"Direct3D could not start the launcher";
+        if (!launcher.Create(core_window)) status = L"Direct3D could not start the launcher (see app.log)";
+        else AppLog("launcher drawn");
         const auto dispatcher = core_window.Dispatcher();
         while (!closing) {
             dispatcher.ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
@@ -462,8 +514,10 @@ private:
             Fail(L"No stage\\boot.json: run Stage-TLOU-Xbox.cmd on the PC and copy the stage folder.");
             return;
         }
+        AppLog("play: loading gow3-runtime.dll");
         runtime = LoadPackagedLibrary(L"gow3-runtime.dll", 0);
         if (!runtime) {
+            AppLog("play: LoadPackagedLibrary failed, error " + std::to_string(GetLastError()));
             Fail(L"gow3-runtime.dll could not be loaded (error " + std::to_wstring(GetLastError()) +
                  L"; 126 = one of its DLLs is missing or refused on this system).");
             return;
@@ -497,6 +551,7 @@ private:
             return;
         }
         CloseHandle(thread);
+        AppLog("play: game thread started; its output goes to boot.log");
     }
 
     static DWORD WINAPI GameThread(void* parameter) {
@@ -551,7 +606,21 @@ private:
 } // namespace
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    winrt::init_apartment();
-    CoreApplication::Run(make<App>());
+    // No winrt::init_apartment here: CoreApplication::Run makes this thread the view's ASTA, and
+    // fails (the app closes at once) when it is already in the multithreaded apartment.
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* info) -> LONG {
+        char line[160];
+        sprintf_s(line, "crash: exception 0x%08lX at %p", info->ExceptionRecord->ExceptionCode,
+                  info->ExceptionRecord->ExceptionAddress);
+        AppLog(line);
+        return EXCEPTION_CONTINUE_SEARCH;
+    });
+    try {
+        CoreApplication::Run(make<App>());
+    } catch (const winrt::hresult_error& e) {
+        AppLog("CoreApplication::Run failed: " + winrt::to_string(e.message()));
+    } catch (const std::exception& e) {
+        AppLog(std::string("CoreApplication::Run failed: ") + e.what());
+    }
     return 0;
 }
