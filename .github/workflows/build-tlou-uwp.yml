@@ -208,10 +208,12 @@ jobs:
         with:
           name: stage-kit
           path: kit
-      - name: Zip
+      - name: Zip (the tag in the file names)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          (cd kit && zip -qr ../tlou-uwp-stage-kit.zip tlou-uwp-stage-kit)
-          (cd release && zip -qr ../tlou-uwp-xbox.zip .)
+          (cd kit && zip -qr "../tlou-uwp-stage-kit-$TAG.zip" tlou-uwp-stage-kit)
+          (cd release && zip -qr "../tlou-uwp-xbox-$TAG.zip" .)
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
@@ -220,11 +222,14 @@ jobs:
           prerelease: true
           body: |
             Experimental UWP build of the TLOU Remastered PC port (ravencaio/tlou-remastered-pc, GPL-2.0) for Xbox Developer Mode.
-            tlou-uwp-xbox.zip: the app package, its dependency packages and the signing certificate.
-            tlou-uwp-stage-kit.zip: run Stage-TLOU-Xbox.cmd on a PC with your own game dump, then copy
+            What's new: the app no longer closes as soon as it starts; it writes LocalState\app.log, and after a
+            failed game run it shows the end of boot.log. Package version 0.1.1.0 installs over the earlier one.
+
+            tlou-uwp-xbox-*.zip: the app package, its dependency packages and the signing certificate.
+            tlou-uwp-stage-kit-*.zip: run Stage-TLOU-Xbox.cmd on a PC with your own game dump, then copy
             the result to the console (README-UWP.md). Contains no game files.
             Rendering on Xbox needs a Vulkan driver in the package; see README-UWP.md (Known limits).
           files: |
-            tlou-uwp-xbox.zip
-            tlou-uwp-stage-kit.zip
+            tlou-uwp-xbox-*.zip
+            tlou-uwp-stage-kit-*.zip
           fail_on_unmatched_files: true
