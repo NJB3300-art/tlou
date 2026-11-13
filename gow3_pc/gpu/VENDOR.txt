@@ -1,0 +1,58 @@
+Vendored from https://github.com/shadps4-emu/shadPS4 commit b4e7ae776071ceb1dd35004577a8719481e1d258 (GPL-2.0-or-later).
+Directories: src/video_core, src/shader_recompiler, src/common, src/core/libraries/{gnmdriver,videoout}, externals/gcn, externals/sirit, externals/half.
+Also: src/core/libraries/kernel/{orbis_error,posix_error,time,process,equeue}.h, equeue.cpp, src/core/libraries/error_codes.h, src/core/platform.h, src/core/libraries/system/{userservice,systemservice}.h.
+Also: src/core/libraries/avplayer (without the handle streamer), src/core/libraries/videodec/video_utils.{h,cpp}.
+Local changes are marked with "gow3:" comments.
+Backported from upstream after b4e7ae7 (2026-10-02), recompiler correctness fixes only:
+  233562929 V_INTERP_MOV_F32 P10/P20 selectors (#5087), d96278e1e compute shader floating-point
+  mode (#5126), e518a6515 S_SUBB_U32 SCC wrap (#5031), 282e5c792 S_ADDC_U32 SCC carry-out (#5030),
+  fb6367d29 32-bit literals in the high dword of 64-bit floats (#5114), 94e217781 V_BFM_B32 (#5185),
+  d1cb90dbb ADDC (#5200), dd43d1cac V_CVT_PK_U8_F32 (#5194), ef08b1e1f V_ALIGNBIT/ALIGNBYTE (#5186).
+Ported from SpartanPort (2026-11): e6c79a5fe constant-engine counter waits: no unsigned wrap,
+  no null task resumed (#5406).
+  SpartanPort 812190a: the VRAM staging ring keeps 32 MiB (GOW3_STAGING_KEEP_VRAM_MB), fills its
+  first blocks first and frees blocks idle for 600 frames.
+  SpartanPort 21db7f2 (memory part; the draw-prep part was already in src/probe.c): memory calls
+  read the game's arguments and write its results outside the region-table lock.
+  SpartanPort c22329f (part): shader cache writes drained at window close (2 s), partial loads
+  rejected, damaged records skipped (Serialization::CorruptData), SlotVector storage reserved
+  once and committed in 2 MiB chunks (entries never move).
+  SpartanPort e1594f6 + bc78995: prepared draws whose V#s changed since a draw-preparation worker
+  read them are not used (TryPreparedPipeline, ResolveVertexBuffers; GOW3_STALE_VSHARP_CHECK=0).
+  SpartanPort 19744538: a texture set is remembered only when no image was (un)registered while
+  it was resolved (GOW3_TEXTURE_SET_STAMP_FIX=0).
+Ported from BilalReloaded's Uncharted port 0.8.4 (ea7a110b1, 2026-11): shared_memory_bounds_pass.cpp
+  (LDS accesses bounds-checked like the PS4, GOW3_LDS_BOUNDS) and the LDS size in a compute
+  permutation's key (GOW3_LDS_SIZE_KEY); cached compute shaders carry a "GLDB" meta record.
+After SuperMedo's 031baf5 / BilalReloaded 0.8.3: compute workgroups above 256 threads that share
+  nothing run as workgroups of 64 (WorkgroupSplitFactors; X, Y and Z, every part in X, the split
+  read back from the SPIR-V LocalSize at the dispatch; GOW3_WORKGROUP_SPLIT).
+Lane coarsening (11 Nov 2026, lane_coarsening.cpp, LaneTraversal in emit_spirv.cpp): a compute
+  shader can run several guest invocations per host invocation; regions between barriers are
+  emitted once per lane, barriers and the constructs holding them once (GOW3_LANE_COARSEN).
+After SpartanPort PR #1077 (Intel, 2026-10/11) and SuperMedo's 0.3.3: VK_EXT_vertex_input_dynamic_state
+  off on Intel's Windows driver (GOW3_VERTEX_INPUT_DYNAMIC; Profile::static_vertex_input, in the
+  former padding byte, keeps the caches of the two modes apart), LDS barriers on every GPU without
+  64-lane subgroups (GOW3_LDS_BARRIERS) and the subgroup size required when the driver offers a
+  range (Instance::RequiredSubgroupSize, GOW3_SUBGROUP_PIN; first written on intel-arc-tests).
+Intel UHD 630 findings (11 Nov 2026): float rounding toward zero left out on Intel's Windows driver
+  (profile, GOW3_RTZ); UniformBarrierPass (shared_memory_barrier_pass.cpp, GOW3_UNIFORM_BARRIERS):
+  barriers inside divergent ifs run for every thread, LDS writes predicated; sample shading off
+  on one-sample draws (GOW3_SAMPLE_SHADING_1X); f03223b's detiler grid and every-level buffer
+  copies reapplied (also in Fruc12's PR #83); diagnostics GOW3_FLOAT_CONTROLS, GOW3_VK_DISABLE_EXT
+  (after SpartanPort's SPARTAN_VK_DISABLE_EXT), GOW3_CHECKPOINT_FILE; frame captures written as
+  RGBA on BGRA swapchains.
+The Last of Us render-size literals (12 Nov 2026, #5/#66, shader_recompiler/render_size_literals.cpp):
+  the game rewrites its shaders' quarter-size grid literals (480, 270, 1/480, 1/270) for its
+  render size, so shader metas carry a "GRSZ" record of the size whose literals the code holds and
+  shaders cached for another size compile again (metas without it: searched in the SPIR-V);
+  GOW3_RENDER_SIZE_CACHE=0 turns the check off.
+  QuarterDepthPass (quarter_depth_pass.cpp): Cs_DownsampleQuarterDepth (cs 42cb16a5) writes the
+  depth of each block's top-left pixel, where the ambient shadows are computed, instead of the
+  farthest of the block (cached binary "_qd"; GOW3_QUARTER_DEPTH=0 off).
+  QuarterGridPass (quarter_grid_pass.cpp): the materials' ambient shadow grid literals (as the game
+  writes them for its render size) become the size of the texture they sample (its T#), so the
+  shadows can be drawn at half size (tools/probe_tlou.py AMBIENT_SHADOWS_HALF); metas carry a
+  "GRS2" record (pixel shaders cached with the fixed grid compile again once). QuarterDepthPass
+  moves its gather by 1/16 texel (robust at half size; cached binary "_qd2"). GOW3_TRACE_SAMPLERS
+  (vk_rasterizer.cpp BindSamplers).

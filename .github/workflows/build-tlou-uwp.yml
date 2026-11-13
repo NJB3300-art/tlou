@@ -1,0 +1,230 @@
+name: Build TLOU UWP (Xbox Dev Mode)
+
+# Builds the UWP version of this repository (a copy of ravencaio/tlou-remastered-pc, GPL-2.0, with
+# the UWP changes):
+#   1. gow3-runtime.dll: the runtime, MSYS2 CLANG64, -DGOW3_UWP=ON
+#   2. TLOU.Uwp: the packaged app (launcher + host), MSVC / C++/WinRT, with the runtime's DLLs inside
+# Every push to main builds and uploads artifacts; a tlou-v* tag or a manual run with a tag also
+# publishes a GitHub Release. No game files are involved.
+
+on:
+  push:
+    branches: [main]
+    tags: ['tlou-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create (e.g. tlou-v0.1.0); empty: build only'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  runtime:
+    name: gow3-runtime.dll (MSYS2 CLANG64)
+    runs-on: windows-2022
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Keep line endings as committed (the patch has LF)
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: port
+          submodules: recursive
+
+      - name: Set up MSYS2 CLANG64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git patch
+            mingw-w64-clang-x86_64-toolchain mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-fmt mingw-w64-clang-x86_64-boost mingw-w64-clang-x86_64-robin-map
+            mingw-w64-clang-x86_64-xxhash mingw-w64-clang-x86_64-ffmpeg mingw-w64-clang-x86_64-zydis
+            mingw-w64-clang-x86_64-spirv-tools mingw-w64-clang-x86_64-spirv-headers
+            mingw-w64-clang-x86_64-spirv-cross mingw-w64-clang-x86_64-ntldd
+
+      - name: Apply the FSR-Vulkan patches (as build.sh does)
+        run: |
+          cd port/gow3_pc
+          for patch in gpu/patches/fsr-vulkan/*.patch; do
+            git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
+          done
+
+      - name: Configure
+        run: |
+          cd port/gow3_pc
+          cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DGOW3_UWP=ON \
+            -DGOW3_PGO=off -DGOW3_LTO=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build gow3-runtime.dll
+        run: |
+          cd port/gow3_pc
+          if ! ninja -C out/gpu gow3-runtime > out/build.log 2>&1; then
+            grep -E "error|Error|undefined" out/build.log | head -150
+            tail -60 out/build.log
+            exit 1
+          fi
+          tail -3 out/build.log
+
+      - name: Collect the DLLs it loads
+        run: |
+          mkdir -p dist
+          cp port/gow3_pc/out/gpu/gow3-runtime.dll dist/
+          # Everything from CLANG64 that the DLL needs, recursively; Windows' own DLLs stay out.
+          ntldd -R dist/gow3-runtime.dll | tr -d '\r' | awk '{print $1}' | sort -u | while read -r name; do
+            if [ -f "/clang64/bin/$name" ]; then cp "/clang64/bin/$name" dist/; fi
+          done
+          # What every packaged DLL imports from the system: the first thing to check when the
+          # console refuses to load one (error 126).
+          {
+            for dll in dist/*.dll; do
+              echo "== $(basename "$dll")"
+              llvm-objdump -p "$dll" | grep "DLL Name" | sed 's/.*DLL Name: //' | sort -u
+            done
+          } > dist/runtime-imports.txt
+          cp port/LICENSE dist/LICENSE-tlou-remastered-pc.txt
+          ls -la dist
+          cat dist/runtime-imports.txt
+
+      - name: Upload the runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: gow3-runtime
+          path: dist/
+
+      - name: Staging kit for the PC
+        run: |
+          mkdir -p kit/tlou-uwp-stage-kit/gow3_pc
+          cd port
+          cp -r tools Stage-TLOU-Xbox.cmd LICENSE ../kit/tlou-uwp-stage-kit/
+          cp -r gow3_pc/scripts ../kit/tlou-uwp-stage-kit/gow3_pc/
+          cp uwp-app/README.md ../kit/tlou-uwp-stage-kit/README-UWP.md
+
+      - name: Upload the staging kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-kit
+          path: kit/
+
+  app:
+    name: TLOU.Uwp package (MSVC)
+    needs: runtime
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Keep line endings as committed (the patch has LF)
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: self
+
+      - name: Download the runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: gow3-runtime
+          path: runtime
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Create the signing certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=TLOU-UWP" -KeyUsage DigitalSignature `
+            -FriendlyName "TLOU UWP port" -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $pw = [guid]::NewGuid().ToString("N")
+          "CERT_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($cert.Thumbprint)" -FilePath "$PWD\tlou-uwp.pfx" `
+            -Password (ConvertTo-SecureString -String $pw -AsPlainText -Force)
+          Export-Certificate -Cert "Cert:\CurrentUser\My\$($cert.Thumbprint)" -FilePath "$PWD\tlou-uwp-signing.cer"
+
+      - name: Configure (CMake, WindowsStore)
+        shell: pwsh
+        run: |
+          cmake -S self/uwp-app -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_SYSTEM_NAME=WindowsStore "-DCMAKE_SYSTEM_VERSION=10.0" `
+            "-DGOW3_UWP_INCLUDE=$PWD/self/gow3_pc/uwp" "-DGOW3_RUNTIME_DIR=$PWD/runtime" `
+            "-DTLOU_CERT=$PWD/tlou-uwp.pfx"
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          msbuild build\TLOUUwp.vcxproj /m /p:Configuration=Release /p:Platform=x64 `
+            /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:GenerateAppxPackageOnBuild=true `
+            "/p:AppxPackageDir=$PWD\AppPackages\" "/p:PackageCertificateKeyFile=$PWD\tlou-uwp.pfx" `
+            "/p:PackageCertificatePassword=$env:CERT_PW" /p:PackageCertificateThumbprint= `
+            /p:AppxPackageSigningEnabled=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem -Recurse AppPackages | Select-Object FullName, Length
+
+      - name: Collect the release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Get-ChildItem -Path AppPackages -Recurse -Include *.msix,*.appx,*.msixbundle,*.appxbundle |
+            Where-Object { $_.FullName -notmatch '\\Dependencies\\' } | Copy-Item -Destination release
+          Get-ChildItem -Path AppPackages -Recurse -Directory -Filter Dependencies | ForEach-Object {
+            Get-ChildItem -Path $_.FullName -Recurse -Filter *.appx | Where-Object { $_.FullName -match 'x64' } |
+              Copy-Item -Destination release
+          }
+          Copy-Item tlou-uwp-signing.cer release
+          Copy-Item runtime\runtime-imports.txt release
+          Copy-Item self\uwp-app\README.md release\README-UWP.md
+          Get-ChildItem release
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlou-uwp-package
+          path: release/
+
+  release:
+    name: GitHub Release
+    needs: [runtime, app]
+    if: startsWith(github.ref, 'refs/tags/tlou-v') || github.event.inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tlou-uwp-package
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: stage-kit
+          path: kit
+      - name: Zip
+        run: |
+          (cd kit && zip -qr ../tlou-uwp-stage-kit.zip tlou-uwp-stage-kit)
+          (cd release && zip -qr ../tlou-uwp-xbox.zip .)
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: TLOU Remastered UWP (Xbox Dev Mode) ${{ github.event.inputs.tag || github.ref_name }}
+          prerelease: true
+          body: |
+            Experimental UWP build of the TLOU Remastered PC port (ravencaio/tlou-remastered-pc, GPL-2.0) for Xbox Developer Mode.
+            tlou-uwp-xbox.zip: the app package, its dependency packages and the signing certificate.
+            tlou-uwp-stage-kit.zip: run Stage-TLOU-Xbox.cmd on a PC with your own game dump, then copy
+            the result to the console (README-UWP.md). Contains no game files.
+            Rendering on Xbox needs a Vulkan driver in the package; see README-UWP.md (Known limits).
+          files: |
+            tlou-uwp-xbox.zip
+            tlou-uwp-stage-kit.zip
+          fail_on_unmatched_files: true

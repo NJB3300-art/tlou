@@ -1,0 +1,15 @@
+# Game files, player data and build output never belong in this repository.
+/game/
+/user/
+/reference/
+/dist/
+*.pkg
+/analysis/*
+/gow3_pc/out/
+/launcher/TLOU Launcher.exe
+/TLOU Game.exe
+/tlou-game-child.log
+/tlou-run.log
+/launcher/assets/
+__pycache__/
+*.pyc

@@ -1,20 +1,27 @@
-# Moonlight for Xbox (blade theme) - build and release
+# The Last of Us Remastered — PC port, made into a UWP app (Xbox Developer Mode)
 
-Builds the open-source [moonlight-xbox](https://github.com/TheElixZammuto/moonlight-xbox) client (GPL) for Xbox Dev Mode with a custom light/green theme, and publishes it as a GitHub Release.
+A copy of [ravencaio/tlou-remastered-pc](https://github.com/ravencaio/tlou-remastered-pc) (GPL-2.0),
+the native PC port of the PS4 *The Last of Us Remastered* (CUSA00552), with its Windows pieces
+(launcher, game start, runtime) rebuilt to run as a UWP app on an Xbox in Developer Mode.
 
-This repo contains **no game files**. The app only streams from a Sunshine host (your PC or a cloud VM) that runs your own copy of a game.
+**No game files are in this repository.** You need your own dump of the game and its update 1.11.
+Not affiliated with Sony Interactive Entertainment, Naughty Dog or Microsoft.
+
+- **UWP / Xbox:** [`uwp-app/README.md`](uwp-app/README.md): what changed, staging your dump on a
+  PC (`Stage-TLOU-Xbox.cmd`), installing with Device Portal, known limits.
+- **The original PC port** (still builds and runs as before): [`README-PC.md`](README-PC.md).
 
 ## Get a build
-1. Open the **Actions** tab, choose **Build and Release (Xbox UWP)**, click **Run workflow**, enter a tag such as `v1.0.0`.
-2. When it finishes, download the zip from **Releases**.
 
-## Install on Xbox (Dev Mode)
-1. Enable Dev Mode on the console and open Device Portal.
-2. Upload the `.msixbundle`, add the dependency `.appx` files from the release (VCLibs, UI.Xaml), install.
-3. In the app, add your host's IP and pair using the PIN in Sunshine's web UI.
+Every push to `main` runs **Build TLOU UWP (Xbox Dev Mode)** under Actions. Its artifacts are
+`tlou-uwp-package` (the app package, its VCLibs dependency and the signing certificate) and
+`stage-kit` (the PC staging tools). To publish a Release, run the workflow from the Actions tab
+with a tag such as `tlou-v0.1.0`, or push such a tag.
 
-## Contents
-- `.github/workflows/build-release.yml` - builds upstream source with the patch applied
-- `patches/blade-theme.patch` - the theme changes (App.xaml, host and app pages)
+## Layout
 
-Licensed consistent with upstream (GPL). Not affiliated with Microsoft, Sony or Naughty Dog.
+- `gow3_pc/`, `tools/`, `launcher/` - the port, as upstream, plus the UWP build (`GOW3_UWP`):
+  `gow3_pc/uwp/` (the runtime as `gow3-runtime.dll`, an SDL3 stand-in, app-container memory calls)
+- `uwp-app/` - the UWP app (C++/WinRT): launcher and host of the runtime
+- `Stage-TLOU-Xbox.cmd` - prepares your dump on a PC for the console (`tools/probe_tlou.py --stage`)
+- `.github/workflows/build-tlou-uwp.yml` - builds the runtime (MSYS2 CLANG64) and the app (MSVC)
