@@ -137,10 +137,11 @@
     <code>app.log</code> (the app), <code>boot.log</code> (the game), your saves, <code>tlou.ini</code> and the shader cache.
   </div>
   <div class="card warn">
-    <h3>Known limit: Vulkan on Xbox</h3>
-    The game draws with Vulkan, and the Xbox has no Vulkan driver of its own. Until a driver for UWP is added to the
-    package (for example Mesa's Vulkan-on-Direct3D 12 driver), the game may stop when it starts its renderer.
-    <code>boot.log</code> then says so.
+    <h3>Known limits: rendering and memory</h3>
+    The game draws with Vulkan. From v0.2.2-uwp.3 the package carries Mesa's Dozen driver (Vulkan on Direct3D 12),
+    patched to draw into the app's window; this is experimental and untested on a console, and features the
+    renderer needs may be missing. The PC port also needs about 6 GB, more than Developer Mode gives a game
+    (about 5 GiB). <code>boot.log</code> says what stopped the game.
   </div>
 
   <footer>

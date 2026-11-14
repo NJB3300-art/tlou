@@ -67,13 +67,18 @@ settings (`tlou.ini`), the shader cache and `boot.log` are in the app's `LocalSt
 
 ## Known limits
 
-- **Vulkan on Xbox.** The renderer is Vulkan; the console has no Vulkan driver of its own. The
-  package carries the Khronos loader (`vulkan-1.dll`) and the runtime also loads a driver DLL
-  from the package directly (*Vulkan driver* → Mesa Dozen loads `vulkan_dzn.dll`, Mesa's Vulkan on
-  Direct3D 12). Neither is built here yet: a Dozen build for UWP whose swap chain targets a
-  CoreWindow has to be added to the package (put `vulkan_dzn.dll`, or `vulkan_icd.json` + the
-  driver, in the runtime folder before packaging). Until then the game stops when it creates
-  the Vulkan instance, with the reason in `boot.log`.
+- **Rendering on Xbox (experimental).** The game draws with Vulkan, and the console has no Vulkan
+  driver. From v0.2.2-uwp.3 the package carries one: Mesa's **Dozen** (`vulkan_dzn.dll`, Vulkan on
+  Direct3D 12, Mesa 26.3.0), built by the workflow with
+  [`uwp-app/mesa/mesa-uwp-corewindow.patch`](mesa/mesa-uwp-corewindow.patch): the swapchain is made
+  for the app's CoreWindow (the app passes it as `MESA_WSI_COREWINDOW`), with no desktop window or
+  DirectComposition, and packaged DLLs load with `LoadPackagedLibrary`. `dxil.dll` (DirectX Shader
+  Compiler) validates and signs the shaders. *Vulkan driver* in the launcher: **Auto** uses Dozen;
+  *Khronos loader* tries `vulkan-1.dll`. Untested on a console: Dozen implements Vulkan 1.1 plus
+  extensions on top of Direct3D 12, and features the renderer needs may be missing there; `boot.log`
+  says what failed. `dozen-imports.txt` in the release lists what the driver needs from the system.
+- **Memory.** The PC port needs about 6 GB; Developer Mode games get about 5 GiB. Expect the game to
+  run out of memory until its settings are reduced for the console.
 - **Write+execute memory.** If the console refuses pages that are writable and executable at
   once, the runtime falls back to execute-read and says so in `boot.log`.
 - **DLLs the console may not have.** `runtime-imports.txt` in the release lists what each packaged

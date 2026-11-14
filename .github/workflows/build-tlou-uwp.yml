@@ -327,9 +327,10 @@ jobs:
           prerelease: true
           body: |
             Experimental UWP build of the TLOU Remastered PC port (ravencaio/tlou-remastered-pc, GPL-2.0) for Xbox Developer Mode.
-            What's new: Wi-Fi transfer (the launcher receives the game from your PC: no USB drive needed),
-            a file check of game, update and stage on the console, and Setup-TLOU-Xbox.cmd in the kit: it finds
-            your PS4 dump, prepares it and sends it to the Xbox in one go. Package version 0.2.0.0.
+            What's new: a Vulkan driver for the Xbox. The package carries Mesa's Dozen (Vulkan on Direct3D 12,
+            Mesa 26.3.0) patched to draw into the app's CoreWindow, and dxil.dll to sign its shaders.
+            Experimental and untested on a console; boot.log says what failed. Package version 0.3.0.0.
+            Also in this build: Wi-Fi transfer, the file check, and Setup-TLOU-Xbox.cmd (one-click setup).
 
             tlou-uwp-xbox-*.zip: the app package, its dependency packages and the signing certificate.
             tlou-uwp-stage-kit-*.zip: run Stage-TLOU-Xbox.cmd on a PC with your own game dump, then copy
