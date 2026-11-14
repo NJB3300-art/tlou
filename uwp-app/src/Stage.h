@@ -11,7 +11,7 @@ struct Settings {
     bool draw_pipe = true;
     bool frame_stats = true;
     bool quarter_depth = true; // v0.2.2: align contact shadows with object edges
-    int vulkan_driver = 0; // 0: vulkan-1.dll from the package, 1: Mesa Dozen (vulkan_dzn.dll)
+    int vulkan_driver = 0; // 0: auto (Mesa Dozen when the package has it), 1: the Khronos loader (vulkan-1.dll)
     std::wstring root;     // the chosen TLOU folder; empty: the first one found
 
     static Settings Load(const std::filesystem::path& file);
@@ -47,7 +47,7 @@ struct Launch {
     std::vector<std::pair<std::string, std::string>> env;
 };
 Launch BuildLaunch(const StageInfo& stage, const Settings& settings, const std::filesystem::path& user_dir,
-                   const std::filesystem::path& install_dir);
+                   const std::filesystem::path& install_dir, void* core_window);
 
 std::string Utf8(const std::wstring& text);
 std::wstring Wide(const std::string& text);

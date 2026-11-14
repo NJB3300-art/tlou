@@ -160,7 +160,7 @@ StageInfo ReadStage(const fs::path& root) {
 }
 
 Launch BuildLaunch(const StageInfo& stage, const Settings& settings, const fs::path& user_dir,
-                   const fs::path& install_dir) {
+                   const fs::path& install_dir, void* core_window) {
     const std::map<std::string, std::string> places{
         {"${STAGE}", Utf8((stage.root / L"stage").wstring())},
         {"${GAME}", Utf8((stage.root / L"CUSA00552").wstring())},
@@ -189,8 +189,16 @@ Launch BuildLaunch(const StageInfo& stage, const Settings& settings, const fs::p
     env["GOW3_DRAW_PIPE"] = settings.draw_pipe ? "1" : "0";
     env["GOW3_FRAME_STATS"] = settings.frame_stats ? "1" : "0";
     env["GOW3_QUARTER_DEPTH"] = settings.quarter_depth ? "1" : "0";
-    // A packaged app has no installed Vulkan driver: the package's (README).
-    if (settings.vulkan_driver == 1) env["GOW3_VULKAN_DLL"] = "vulkan_dzn.dll";
+    // A packaged app has no installed Vulkan driver: the package's. Mesa's Dozen (Vulkan on Direct3D 12)
+    // draws into the app's CoreWindow (MESA_WSI_COREWINDOW, the patch in uwp-app/mesa).
+    const bool dozen = Exists(install_dir / L"vulkan_dzn.dll");
+    if (settings.vulkan_driver == 0 && dozen) env["GOW3_VULKAN_DLL"] = "vulkan_dzn.dll";
+    if (core_window) {
+        char pointer[32];
+        sprintf_s(pointer, "0x%llx", static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(core_window)));
+        env["MESA_WSI_COREWINDOW"] = pointer;
+    }
+    env["MESA_SHADER_CACHE_DIR"] = Utf8((user_dir / L"cache" / L"mesa").wstring());
     if (Exists(install_dir / L"vulkan_icd.json")) {
         env["VK_DRIVER_FILES"] = Utf8((install_dir / L"vulkan_icd.json").wstring());
         env["VK_ICD_FILENAMES"] = env["VK_DRIVER_FILES"];

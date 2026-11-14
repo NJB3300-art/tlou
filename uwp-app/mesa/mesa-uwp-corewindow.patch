@@ -1,0 +1,174 @@
+diff --git a/src/util/u_dl.c b/src/util/u_dl.c
+index 6d8b2b8..8906519 100644
+--- a/src/util/u_dl.c
++++ b/src/util/u_dl.c
+@@ -47,7 +47,18 @@ util_dl_open(const char *filename)
+ #if DETECT_OS_POSIX_LITE
+    return (struct util_dl_library *)dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
+ #elif DETECT_OS_WINDOWS
+-   return (struct util_dl_library *)LoadLibraryA(filename);
++   HMODULE module = LoadLibraryA(filename);
++   if (!module) {
++      /* UWP: a packaged app loads the DLLs of its package with LoadPackagedLibrary. */
++      typedef HMODULE (WINAPI *load_packaged_fn)(LPCWSTR, DWORD);
++      HMODULE kernel = GetModuleHandleA("kernelbase.dll");
++      load_packaged_fn load_packaged = kernel ?
++         (load_packaged_fn)(void (*)(void))GetProcAddress(kernel, "LoadPackagedLibrary") : NULL;
++      WCHAR wide[MAX_PATH];
++      if (load_packaged && MultiByteToWideChar(CP_UTF8, 0, filename, -1, wide, MAX_PATH))
++         module = load_packaged(wide, 0);
++   }
++   return (struct util_dl_library *)module;
+ #else
+    return NULL;
+ #endif
+diff --git a/src/vulkan/wsi/wsi_common_win32.cpp b/src/vulkan/wsi/wsi_common_win32.cpp
+index 0622857..a5ff0d2 100644
+--- a/src/vulkan/wsi/wsi_common_win32.cpp
++++ b/src/vulkan/wsi/wsi_common_win32.cpp
+@@ -42,6 +42,24 @@
+ 
+ #include <dcomp.h>
+ 
++/* UWP (Xbox Developer Mode): an app has a CoreWindow, not a desktop HWND, and no DirectComposition.
++ * When MESA_WSI_COREWINDOW holds the address of the app's CoreWindow (an IUnknown*, in hex), the
++ * swapchain is created for that window with CreateSwapChainForCoreWindow; the HWND of the surface is
++ * not used, and the window's size comes from the swapchain (currentExtent = 0xFFFFFFFF). */
++static IUnknown *
++wsi_win32_core_window(void)
++{
++   static IUnknown *window;
++   static bool checked;
++   if (!checked) {
++      const char *value = getenv("MESA_WSI_COREWINDOW");
++      if (value && *value)
++         window = (IUnknown *)(uintptr_t)strtoull(value, NULL, 0);
++      checked = true;
++   }
++   return window;
++}
++
+ #if defined(__GNUC__)
+ #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"      // warning: cast to pointer from integer of different size
+ #endif
+@@ -109,6 +127,7 @@ struct wsi_win32_swapchain {
+    VkExtent2D                 extent;
+    HWND wnd;
+    HDC chain_dc;
++   bool tearing;
+    struct wsi_win32_image     images[0];
+ };
+ 
+@@ -179,8 +198,9 @@ wsi_win32_surface_get_capabilities(VkIcdSurfaceBase *surf,
+ {
+    VkIcdSurfaceWin32 *surface = (VkIcdSurfaceWin32 *)surf;
+ 
+-   RECT win_rect;
+-   if (!GetClientRect(surface->hwnd, &win_rect))
++   RECT win_rect = { 0, 0, -1, -1 };
++   const bool core_window = wsi_win32_core_window() != NULL;
++   if (!core_window && !GetClientRect(surface->hwnd, &win_rect))
+       return VK_ERROR_SURFACE_LOST_KHR;
+ 
+    caps->surfaceCapabilities.minImageCount = 1;
+@@ -201,6 +221,8 @@ wsi_win32_surface_get_capabilities(VkIcdSurfaceBase *surf,
+       (uint32_t)win_rect.right - (uint32_t)win_rect.left,
+       (uint32_t)win_rect.bottom - (uint32_t)win_rect.top
+    };
++   if (core_window)
++      caps->surfaceCapabilities.currentExtent = { UINT32_MAX, UINT32_MAX };
+    caps->surfaceCapabilities.minImageExtent = { 1u, 1u };
+    caps->surfaceCapabilities.maxImageExtent = {
+       wsi_device->maxImageDimension2D,
+@@ -211,7 +233,8 @@ wsi_win32_surface_get_capabilities(VkIcdSurfaceBase *surf,
+    caps->surfaceCapabilities.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    caps->surfaceCapabilities.maxImageArrayLayers = 1;
+ 
+-   caps->surfaceCapabilities.supportedCompositeAlpha =
++   caps->surfaceCapabilities.supportedCompositeAlpha = core_window ?
++      VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR :
+       VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR |
+       VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR |
+       VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+@@ -628,7 +651,8 @@ wsi_win32_swapchain_destroy(struct wsi_swapchain *drv_chain,
+    for (uint32_t i = 0; i < chain->base.image_count; i++)
+       wsi_win32_image_finish(chain, allocator, &chain->images[i]);
+ 
+-   DeleteDC(chain->chain_dc);
++   if (chain->chain_dc)
++      DeleteDC(chain->chain_dc);
+ 
+    if (chain->surface->current_swapchain == chain)
+       chain->surface->current_swapchain = NULL;
+@@ -799,7 +823,7 @@ wsi_win32_queue_present_dxgi(struct wsi_win32_swapchain *chain,
+ 
+    image->state = WSI_IMAGE_QUEUED;
+    UINT sync_interval = chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR ? 1 : 0;
+-   UINT present_flags = chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ?
++   UINT present_flags = chain->tearing && chain->base.present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR ?
+       DXGI_PRESENT_ALLOW_TEARING : 0;
+ 
+    HRESULT hres = chain->dxgi->Present1(sync_interval, present_flags, &params);
+@@ -813,8 +837,10 @@ wsi_win32_queue_present_dxgi(struct wsi_win32_swapchain *chain,
+    }
+ 
+    if (chain->surface->current_swapchain != chain) {
+-      chain->surface->visual->SetContent(chain->dxgi);
+-      chain->wsi->dxgi.dcomp->Commit();
++      if (chain->surface->visual) {
++         chain->surface->visual->SetContent(chain->dxgi);
++         chain->wsi->dxgi.dcomp->Commit();
++      }
+       chain->surface->current_swapchain = chain;
+    }
+ 
+@@ -906,6 +932,29 @@ wsi_win32_surface_create_swapchain_dxgi(
+       desc.BufferUsage |= DXGI_USAGE_RENDER_TARGET_OUTPUT;
+ 
+    IDXGISwapChain1 *swapchain1;
++   IUnknown *core_window = wsi_win32_core_window();
++   if (core_window) {
++      /* A CoreWindow swapchain shows the window's content as is: no alpha, no tearing flag.
++       * The previous swapchain of the window may still be going away: a few tries. */
++      desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
++      desc.Flags = 0;
++      HRESULT hr = E_FAIL;
++      for (int attempt = 0; attempt < 60; attempt++) {
++         hr = factory->CreateSwapChainForCoreWindow(queue, core_window, &desc, NULL, &swapchain1);
++         if (hr != E_ACCESSDENIED && hr != DXGI_ERROR_INVALID_CALL)
++            break;
++         Sleep(16);
++      }
++      if (FAILED(hr) || FAILED(swapchain1->QueryInterface(&chain->dxgi))) {
++         fprintf(stderr, "MESA: CreateSwapChainForCoreWindow failed: 0x%08lx\n", (unsigned long)hr);
++         return VK_ERROR_INITIALIZATION_FAILED;
++      }
++      swapchain1->Release();
++      chain->tearing = false;
++      surface->current_swapchain = chain;
++      return VK_SUCCESS;
++   }
++   chain->tearing = (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0;
+    if (FAILED(factory->CreateSwapChainForComposition(queue, &desc, NULL, &swapchain1)) ||
+        FAILED(swapchain1->QueryInterface(&chain->dxgi)))
+       return VK_ERROR_INITIALIZATION_FAILED;
+@@ -978,7 +1027,7 @@ wsi_win32_surface_create_swapchain(
+    };
+ 
+    bool supports_dxgi = wsi->dxgi.factory &&
+-                        wsi->dxgi.dcomp &&
++                        (wsi->dxgi.dcomp || wsi_win32_core_window()) &&
+                         wsi->wsi->win32.get_d3d12_command_queue;
+    struct wsi_base_image_params *image_params = supports_dxgi ?
+       &dxgi_image_params.base : &cpu_image_params.base;
+@@ -1116,8 +1165,8 @@ wsi_win32_init_wsi(struct wsi_device *wsi_device,
+          result = VK_ERROR_INITIALIZATION_FAILED;
+          goto fail;
+       }
+-      wsi->dxgi.dcomp = dcomp_get_device();
+-      if (!wsi->dxgi.dcomp) {
++      wsi->dxgi.dcomp = wsi_win32_core_window() ? NULL : dcomp_get_device();
++      if (!wsi->dxgi.dcomp && !wsi_win32_core_window()) {
+          wsi->dxgi.factory->Release();
+          vk_free(alloc, wsi);
+          result = VK_ERROR_INITIALIZATION_FAILED;

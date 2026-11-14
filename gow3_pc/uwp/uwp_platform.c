@@ -166,14 +166,20 @@ HMODULE gow3_uwp_load_library_w(LPCWSTR name) {
     const wchar_t *base = name;
     for (const wchar_t *c = name; *c; ++c)
         if (*c == L'\\' || *c == L'/') base = c + 1;
-    HMODULE module = LoadPackagedLibrary(base, 0);
-    /* vulkan-1.dll: the package may carry a driver under another name (GOW3_VULKAN_DLL). */
-    if (!module && !_wcsicmp(base, L"vulkan-1.dll")) {
+    /* vulkan-1.dll: a driver the package carries (GOW3_VULKAN_DLL, Mesa's vulkan_dzn.dll) comes first;
+     * the Khronos loader needs system DLLs a console may not have. */
+    if (!_wcsicmp(base, L"vulkan-1.dll")) {
         wchar_t chosen[MAX_PATH];
-        if (GetEnvironmentVariableW(L"GOW3_VULKAN_DLL", chosen, MAX_PATH))
-            module = LoadPackagedLibrary(chosen, 0);
+        if (GetEnvironmentVariableW(L"GOW3_VULKAN_DLL", chosen, MAX_PATH) && chosen[0]) {
+            HMODULE driver = LoadPackagedLibrary(chosen, 0);
+            if (driver) {
+                fprintf(stderr, "UWP: Vulkan from %ls\n", chosen);
+                return driver;
+            }
+            fprintf(stderr, "UWP: %ls could not be loaded (error %lu): trying vulkan-1.dll\n", chosen, GetLastError());
+        }
     }
-    return module;
+    return LoadPackagedLibrary(base, 0);
 }
 
 HMODULE gow3_uwp_load_library_a(LPCSTR name) {

@@ -418,13 +418,14 @@ SDL_Window* SDL_CreateWindowWithProperties(SDL_PropertiesID props) {
         }
     }
     window->properties = SDL_CreateProperties();
-    SetProperty(window->properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, Value{std::in_place_type<void*>, host->hwnd});
+    // Mesa's CoreWindow mode (MESA_WSI_COREWINDOW) does not use the surface's HWND; it must not be null.
+    SetProperty(window->properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+                Value{std::in_place_type<void*>, host->hwnd ? host->hwnd : host->core_window});
     SetProperty(window->properties, SDL_PROP_WINDOW_WINRT_WINDOW_POINTER, Value{std::in_place_type<void*>, host->core_window});
     HostWindowSize(&window->last_w, &window->last_h);
     g_window = window;
-    if (!host->hwnd) {
-        std::fprintf(stderr, "UWP: the CoreWindow has no window handle for the Vulkan surface\n");
-    }
+    std::fprintf(stderr, "UWP: window %dx%d, CoreWindow %p, HWND %p\n", window->last_w, window->last_h,
+                 host->core_window, host->hwnd);
     return reinterpret_cast<SDL_Window*>(window);
 }
 void SDL_DestroyWindow(SDL_Window* window) {

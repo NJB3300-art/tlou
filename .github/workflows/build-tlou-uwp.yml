@@ -118,9 +118,102 @@ jobs:
           name: stage-kit
           path: kit/
 
+  dozen:
+    name: Mesa Dozen (Vulkan on Direct3D 12)
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      MESA_VERSION: 26.3.0
+      MESA_SHA256: 91d729aa68bb89e4ec857841300bbe922bcb3e52b1f97566ca83930d3b28343a
+      # mmozeiko/build-mesa: its recipe for Mesa on Windows and its dxil-hash.patch (Mesa signs its own
+      # shaders when dxil.dll is missing or refused)
+      BUILD_MESA_COMMIT: 68725fb5d8e12c25efbb655780747bda417a53c1
+    steps:
+      - name: Keep line endings as committed (the patch has LF)
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: self
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tools (meson, ninja, mako, win_flex_bison)
+        shell: cmd
+        run: |
+          pip install meson ninja mako pyyaml packaging || exit /b 1
+          mkdir winflexbison && cd winflexbison
+          curl -sfL -o wfb.zip https://github.com/lexxmark/winflexbison/releases/download/v2.5.24/win_flex_bison-2.5.24.zip || exit /b 1
+          tar -xf wfb.zip || exit /b 1
+          echo %CD%>> %GITHUB_PATH%
+
+      - name: Mesa source and patches
+        shell: pwsh
+        run: |
+          curl.exe -sfLo mesa.tar.xz "https://archive.mesa3d.org/mesa-$env:MESA_VERSION.tar.xz"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $hash = (Get-FileHash mesa.tar.xz -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:MESA_SHA256) { Write-Error "mesa.tar.xz: sha256 $hash"; exit 1 }
+          tar -xf mesa.tar.xz
+          curl.exe -sfLo dxil-hash.patch "https://raw.githubusercontent.com/mmozeiko/build-mesa/$env:BUILD_MESA_COMMIT/patches/dxil-hash.patch"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cd "mesa-$env:MESA_VERSION"
+          git apply --whitespace=nowarn ../dxil-hash.patch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git apply --whitespace=nowarn ../self/uwp-app/mesa/mesa-uwp-corewindow.patch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build vulkan_dzn.dll
+        shell: cmd
+        run: |
+          rem Window, GDI and DirectComposition calls are for desktop windows: loaded only if used, so
+          rem the driver still loads where those DLLs are missing.
+          set LINK=/DELAYLOAD:user32.dll /DELAYLOAD:gdi32.dll /DELAYLOAD:dcomp.dll delayimp.lib version.lib ntdll.lib
+          meson setup build mesa-%MESA_VERSION% --prefix="%CD%\dozen" --default-library=static --wrap-mode=default ^
+            -Dbuildtype=release -Db_ndebug=true -Db_vscrt=mt "-Dc_args=-wd4189 -wd4319" ^
+            -Dllvm=disabled -Dplatforms=windows -Dvideo-codecs= -Dgallium-drivers= ^
+            -Dvulkan-drivers=microsoft-experimental -Dopengl=false -Degl=disabled -Dgles1=disabled -Dgles2=disabled || (
+              type build\meson-logs\meson-log.txt | findstr /i "error" & exit /b 1 )
+          ninja -C build install || exit /b 1
+
+      - name: Collect the driver and dxil.dll
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $dll = Get-ChildItem -Recurse dozen -Filter vulkan_dzn.dll | Select-Object -First 1
+          if (-not $dll) { Write-Error "vulkan_dzn.dll was not built"; exit 1 }
+          Copy-Item $dll.FullName out
+          # dxil.dll: Microsoft's validator and signer from the DirectX Shader Compiler release (redistributable)
+          gh release download --repo microsoft/DirectXShaderCompiler --pattern "dxc_*.zip" --dir dxc
+          if ($LASTEXITCODE -eq 0) {
+            Expand-Archive (Get-ChildItem dxc -Filter "dxc_*.zip" | Select-Object -First 1).FullName dxc\x
+            Copy-Item dxc\x\bin\x64\dxil.dll out
+            Get-ChildItem dxc\x -Filter "LICENSE*" | ForEach-Object { Copy-Item $_.FullName ("out\DXC-" + $_.Name) }
+          } else { Write-Warning "no DXC release found: Mesa signs shaders itself (dxil-hash.patch)" }
+          Copy-Item "mesa-$env:MESA_VERSION\docs\license.rst" out\LICENSE-mesa.txt -ErrorAction SilentlyContinue
+          dumpbin /nologo /dependents out\vulkan_dzn.dll | Out-File -Encoding utf8 out\dozen-imports.txt
+          Get-Content out\dozen-imports.txt
+          Get-ChildItem out | Select-Object Name, Length
+
+      - name: Upload the driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesa-dozen
+          path: out/
+
   app:
     name: TLOU.Uwp package (MSVC)
-    needs: runtime
+    needs: [runtime, dozen]
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
@@ -137,6 +230,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: gow3-runtime
+          path: runtime
+
+      - name: Download the Vulkan driver (Mesa Dozen) into the package
+        uses: actions/download-artifact@v4
+        with:
+          name: mesa-dozen
           path: runtime
 
       - name: Add MSBuild to PATH
@@ -185,6 +284,7 @@ jobs:
           }
           Copy-Item tlou-uwp-signing.cer release
           Copy-Item runtime\runtime-imports.txt release
+          Copy-Item runtime\dozen-imports.txt release -ErrorAction SilentlyContinue
           Copy-Item self\uwp-app\README.md release\README-UWP.md
           Get-ChildItem release
 
@@ -196,7 +296,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [runtime, app]
+    needs: [runtime, dozen, app]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     steps:

@@ -319,7 +319,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         install_dir = fs::path(std::wstring(Package::Current().InstalledLocation().Path()));
         user_dir = local_state / L"user";
         std::error_code ignored;
-        fs::create_directories(user_dir / L"cache", ignored);
+        fs::create_directories(user_dir / L"cache" / L"mesa", ignored);
         fs::create_directories(local_state / L"TLOU", ignored);
         settings = tlou::Settings::Load(local_state / L"launcher.json");
         input = std::make_unique<tlou::Input>();
@@ -421,7 +421,7 @@ private:
             case Item::DrawPipe: v.items.push_back({L"Draw pipeline", OnOff(settings.draw_pipe)}); break;
             case Item::FrameStats: v.items.push_back({L"Frame statistics", OnOff(settings.frame_stats)}); break;
             case Item::VulkanDriver:
-                v.items.push_back({L"Vulkan driver", settings.vulkan_driver ? L"Mesa Dozen (vulkan_dzn.dll)" : L"vulkan-1.dll"});
+                v.items.push_back({L"Vulkan driver", settings.vulkan_driver ? L"Khronos loader" : L"Auto (Mesa Dozen)"});
                 break;
             case Item::Exit: v.items.push_back({L"Exit", L""}); break;
             default: break;
@@ -462,7 +462,11 @@ private:
         v.info.push_back(L"");
         v.info.push_back(L"Saves, settings, shader cache, boot.log:");
         v.info.push_back(L"  " + local_state.wstring());
-        v.info.push_back(std::wstring(L"Window handle for Vulkan: ") + (state.hwnd ? L"yes" : L"no"));
+        {
+            std::error_code e;
+            const bool dozen = fs::exists(install_dir / L"vulkan_dzn.dll", e);
+            v.info.push_back(std::wstring(L"Renderer: ") + (dozen ? L"Mesa Dozen (Vulkan on Direct3D 12)" : L"no Vulkan driver in this package"));
+        }
         v.status = status;
         v.status_warn = status_warn;
         v.log = log_tail;
@@ -574,7 +578,7 @@ private:
             Fail(L"gow3-runtime.dll does not match this app (rebuild both from the same commit).");
             return;
         }
-        launch = tlou::BuildLaunch(stage, settings, user_dir, install_dir);
+        launch = tlou::BuildLaunch(stage, settings, user_dir, install_dir, state.core_window);
         for (const auto& [name, value] : launch.env) set_env(name.c_str(), value.c_str());
         log_path = tlou::Utf8((local_state / L"boot.log").wstring());
 
