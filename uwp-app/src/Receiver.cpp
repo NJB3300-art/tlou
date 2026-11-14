@@ -313,7 +313,8 @@ winrt::fire_and_forget Receiver::Serve(StreamSocket socket) {
                 co_await Respond(out, 409, "text/plain", "offset beyond the received part");
                 co_return;
             }
-            FILE* file = _wfopen(path.c_str(), offset == 0 ? L"wb" : L"r+b");
+            FILE* file = nullptr;
+            if (_wfopen_s(&file, path.c_str(), offset == 0 ? L"wb" : L"r+b") != 0) file = nullptr;
             if (!file || _fseeki64(file, int64_t(offset), SEEK_SET) != 0) {
                 if (file) fclose(file);
                 co_await Respond(out, 500, "text/plain", "cannot write " + Utf8(path.wstring()));
