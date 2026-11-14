@@ -196,8 +196,12 @@ jobs:
             -Dbuild-tests=false -Dzstd=disabled -Dspirv-tools=disabled `
             -Dforce_fallback_for=zlib -Db_pch=false
           if ($LASTEXITCODE -ne 0) { Get-Content build/meson-logs/meson-log.txt -Tail 80; exit 1 }
-          python -m mesonbuild.mesonmain compile -C build
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ninja -C build -k 0 2>&1 | Tee-Object -FilePath build-output.txt | Out-Null
+          $failed = $LASTEXITCODE
+          Write-Host "== compile errors (unique)"
+          Select-String -Path build-output.txt -Pattern ": error C|: fatal error|LNK[0-9]+:|error LNK" |
+            ForEach-Object { $_.Line -replace '^.*?mesa-uwp[/\\]', '' } | Sort-Object -Unique | Select-Object -First 200
+          if ($failed -ne 0 -or -not (Get-ChildItem -Recurse build -Filter vulkan_dzn.dll)) { exit 1 }
 
       - name: Collect the driver and dxil.dll
         shell: pwsh
