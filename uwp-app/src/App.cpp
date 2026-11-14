@@ -3,6 +3,7 @@
 #include "pch.h"
 #include "Host.h"
 #include "Stage.h"
+#include "Receiver.h"
 
 using namespace winrt;
 using namespace winrt::Windows::ApplicationModel;
@@ -50,7 +51,7 @@ void AppLog(const std::string& line) {
 
 constexpr wchar_t AppTitle[] = L"The Last of Us Remastered — UWP";
 
-enum class Item { Play, Location, MotionBlur, ContactShadows, BackgroundShaders, DrawPipe, FrameStats, VulkanDriver, Exit, Count };
+enum class Item { Play, WifiReceive, Location, MotionBlur, ContactShadows, BackgroundShaders, DrawPipe, FrameStats, VulkanDriver, Exit, Count };
 
 // One controller button press per edge, with auto-repeat for the d-pad.
 struct PadNav {
@@ -322,6 +323,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         fs::create_directories(local_state / L"TLOU", ignored);
         settings = tlou::Settings::Load(local_state / L"launcher.json");
         input = std::make_unique<tlou::Input>();
+        receiver = std::make_unique<tlou::Receiver>(local_state / L"TLOU");
         audio = std::make_unique<tlou::Audio>();
         FindGame();
         AppLog("game folders found: " + std::to_string(roots.size()) +
@@ -348,6 +350,12 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
                 continue;
             }
             HandleInput();
+            // Files arrived over Wi-Fi: look at the folders again (at most every 2 seconds).
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_scan > std::chrono::seconds(2) && receiver && receiver->TakeChanged()) {
+                FindGame();
+                last_scan = now;
+            }
             if (!game_started && launcher.Valid()) launcher.Draw(MakeView());
             else std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
@@ -399,6 +407,11 @@ private:
         for (int i = 0; i < int(Item::Count); ++i) {
             switch (Item(i)) {
             case Item::Play: v.items.push_back({played ? L"Restart the app to play again" : L"Play", L""}); break;
+            case Item::WifiReceive: {
+                const auto rx = receiver ? receiver->Snapshot() : tlou::Receiver::Status{};
+                v.items.push_back({L"Receive files over Wi-Fi", rx.running ? L"On" : L"Off"});
+                break;
+            }
             case Item::Location:
                 v.items.push_back({L"Game folder", roots.empty() ? L"not found" : roots[root_index].wstring()});
                 break;
@@ -414,6 +427,20 @@ private:
             default: break;
             }
         }
+        if (receiver) {
+            const auto rx = receiver->Snapshot();
+            if (rx.running || !rx.message.empty()) {
+                v.info.push_back(L"Wi-Fi transfer (to " + (local_state / L"TLOU").wstring() + L")");
+                if (rx.running) {
+                    v.info.push_back(L"  On the PC, open:  " + tlou::Wide(rx.address));
+                    v.info.push_back(L"  Code:  " + tlou::Wide(rx.code));
+                }
+                v.info.push_back(L"  " + std::to_wstring(rx.files_done) + L" files, " +
+                                 std::to_wstring(rx.bytes / (1024 * 1024)) + L" MiB received  ·  " + tlou::Wide(rx.message));
+                if (!rx.current.empty()) v.info.push_back(L"  " + tlou::Wide(rx.current));
+                v.info.push_back(L"");
+            }
+        }
         auto yes = [](bool b) { return b ? L"found" : L"missing"; };
         v.info.push_back(L"Folder layout:  <drive>:\\TLOU  or  LocalState\\TLOU");
         v.info.push_back(std::wstring(L"  CUSA00552 (game) ........ ") + yes(stage.has_game));
@@ -424,6 +451,14 @@ private:
         } else if (!stage.error.empty()) {
             v.info.push_back(L"  " + tlou::Wide(stage.error));
         }
+        if (stage.game_sfo.ok || stage.update_sfo.ok) {
+            v.info.push_back(L"  versions: game " + tlou::Wide(stage.game_sfo.ok ? stage.game_sfo.app_ver : "?") +
+                             L", update " + tlou::Wide(stage.update_sfo.ok ? stage.update_sfo.app_ver : "none"));
+        }
+        if (stage.has_game) {
+            v.info.push_back(stage.problems.empty() ? L"  file check: OK" : L"  file check found problems:");
+        }
+        for (const auto& problem : stage.problems) v.info.push_back(L"  ! " + tlou::Wide(problem));
         v.info.push_back(L"");
         v.info.push_back(L"Saves, settings, shader cache, boot.log:");
         v.info.push_back(L"  " + local_state.wstring());
@@ -445,6 +480,10 @@ private:
                 FindGame();
             }
             break;
+        case Item::WifiReceive:
+            if (receiver->Snapshot().running) receiver->Stop();
+            else receiver->Start();
+            return;
         case Item::MotionBlur: settings.motion_blur = !settings.motion_blur; break;
         case Item::ContactShadows: settings.quarter_depth = !settings.quarter_depth; break;
         case Item::BackgroundShaders: settings.background_shaders = !settings.background_shaders; break;
@@ -511,9 +550,14 @@ private:
             return;
         }
         if (!stage.has_stage) {
-            Fail(L"No stage\\boot.json: run Stage-TLOU-Xbox.cmd on the PC and copy the stage folder.");
+            Fail(L"No stage\\boot.json: run Setup-TLOU-Xbox.cmd on the PC (it can send it over Wi-Fi).");
             return;
         }
+        if (!stage.problems.empty()) {
+            Fail(L"The file check found a problem: " + tlou::Wide(stage.problems.front()));
+            return;
+        }
+        if (receiver) receiver->Stop();
         AppLog("play: loading gow3-runtime.dll");
         runtime = LoadPackagedLibrary(L"gow3-runtime.dll", 0);
         if (!runtime) {
@@ -576,6 +620,8 @@ private:
     tlou::WindowState state;
     std::unique_ptr<tlou::Input> input;
     std::unique_ptr<tlou::Audio> audio;
+    std::unique_ptr<tlou::Receiver> receiver;
+    std::chrono::steady_clock::time_point last_scan{};
     Launcher launcher;
     PadNav nav;
     std::vector<winrt::Windows::System::VirtualKey> pending_keys;

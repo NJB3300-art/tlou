@@ -18,6 +18,13 @@ struct Settings {
     void Save(const std::filesystem::path& file) const;
 };
 
+// A PS4 param.sfo: what game, which version, base game ("gd") or update ("gp").
+struct SfoInfo {
+    bool ok = false;
+    std::string title_id, app_ver, version, category;
+};
+SfoInfo ReadSfo(const std::filesystem::path& file);
+
 struct StageInfo {
     std::filesystem::path root;     // ...\TLOU
     bool has_game = false, has_update = false, has_stage = false;
@@ -25,6 +32,8 @@ struct StageInfo {
     std::vector<std::string> args;  // with ${...} placeholders
     std::map<std::string, std::string> env;
     std::string error;              // why boot.json could not be read
+    SfoInfo game_sfo, update_sfo;   // sce_sys/param.sfo of the game and the update
+    std::vector<std::string> problems; // what the file check found wrong (empty: all good)
 };
 
 // Folders that may hold TLOU: the app's LocalState, then the drives' roots (the external drive

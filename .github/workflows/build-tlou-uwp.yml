@@ -108,7 +108,7 @@ jobs:
         run: |
           mkdir -p kit/tlou-uwp-stage-kit/gow3_pc
           cd port
-          cp -r tools Stage-TLOU-Xbox.cmd LICENSE ../kit/tlou-uwp-stage-kit/
+          cp -r tools Setup-TLOU-Xbox.cmd Stage-TLOU-Xbox.cmd LICENSE ../kit/tlou-uwp-stage-kit/
           cp -r gow3_pc/scripts ../kit/tlou-uwp-stage-kit/gow3_pc/
           cp uwp-app/README.md ../kit/tlou-uwp-stage-kit/README-UWP.md
 
@@ -222,8 +222,9 @@ jobs:
           prerelease: true
           body: |
             Experimental UWP build of the TLOU Remastered PC port (ravencaio/tlou-remastered-pc, GPL-2.0) for Xbox Developer Mode.
-            What's new: the app no longer closes as soon as it starts; it writes LocalState\app.log, and after a
-            failed game run it shows the end of boot.log. Package version 0.1.1.0 installs over the earlier one.
+            What's new: Wi-Fi transfer (the launcher receives the game from your PC: no USB drive needed),
+            a file check of game, update and stage on the console, and Setup-TLOU-Xbox.cmd in the kit: it finds
+            your PS4 dump, prepares it and sends it to the Xbox in one go. Package version 0.2.0.0.
 
             tlou-uwp-xbox-*.zip: the app package, its dependency packages and the signing certificate.
             tlou-uwp-stage-kit-*.zip: run Stage-TLOU-Xbox.cmd on a PC with your own game dump, then copy

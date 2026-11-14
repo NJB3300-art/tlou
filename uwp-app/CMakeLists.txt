@@ -24,7 +24,7 @@ if (NOT RUNTIME_FILES)
 endif()
 
 add_executable(TLOUUwp WIN32
-    src/App.cpp src/Host.cpp src/Stage.cpp src/pch.h src/Host.h src/Stage.h
+    src/App.cpp src/Host.cpp src/Stage.cpp src/Receiver.cpp src/pch.h src/Host.h src/Stage.h src/Receiver.h
     ${GOW3_UWP_INCLUDE}/gow3_uwp_host.h
     Package.appxmanifest ${ASSETS} ${RUNTIME_FILES})
 target_include_directories(TLOUUwp PRIVATE src ${GOW3_UWP_INCLUDE})

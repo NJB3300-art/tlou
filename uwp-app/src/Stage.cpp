@@ -76,11 +76,54 @@ std::vector<fs::path> CandidateRoots(const fs::path& local_state) {
     return roots;
 }
 
+SfoInfo ReadSfo(const fs::path& file) {
+    // PSF: magic "\0PSF", version, key table offset, data table offset, entry count; then
+    // 16-byte entries (key offset u16, format u16, length u32, max length u32, data offset u32).
+    SfoInfo info;
+    const auto bytes = ReadText(file);
+    if (!bytes || bytes->size() < 20 || bytes->compare(0, 4, std::string("\0PSF", 4)) != 0) return info;
+    const std::string& b = *bytes;
+    auto u16 = [&](size_t at) { return at + 2 <= b.size() ? uint32_t(uint8_t(b[at]) | uint8_t(b[at + 1]) << 8) : 0u; };
+    auto u32 = [&](size_t at) { return at + 4 <= b.size() ? u16(at) | u16(at + 2) << 16 : 0u; };
+    const uint32_t keys = u32(8), data = u32(12), count = u32(16);
+    for (uint32_t i = 0; i < count && 20 + i * 16 + 16 <= b.size(); ++i) {
+        const size_t entry = 20 + size_t(i) * 16;
+        const size_t key_at = keys + u16(entry), data_at = data + u32(entry + 12);
+        const uint32_t format = u16(entry + 2), length = u32(entry + 4);
+        if (key_at >= b.size() || data_at + length > b.size() || format != 0x0204) continue; // UTF-8 strings only
+        const std::string key = b.c_str() + key_at;
+        std::string value = b.substr(data_at, length);
+        value = value.c_str(); // up to the terminator
+        if (key == "TITLE_ID") info.title_id = value;
+        else if (key == "APP_VER") info.app_ver = value;
+        else if (key == "VERSION") info.version = value;
+        else if (key == "CATEGORY") info.category = value;
+    }
+    info.ok = !info.title_id.empty();
+    return info;
+}
+
 StageInfo ReadStage(const fs::path& root) {
     StageInfo info;
     info.root = root;
     info.has_game = Exists(root / L"CUSA00552" / L"eboot.bin");
     info.has_update = Exists(root / L"CUSA00552-patch" / L"eboot.bin");
+    // The file check: the right game, the right update, a stage made for that update.
+    info.game_sfo = ReadSfo(root / L"CUSA00552" / L"sce_sys" / L"param.sfo");
+    info.update_sfo = ReadSfo(root / L"CUSA00552-patch" / L"sce_sys" / L"param.sfo");
+    if (Exists(root / L"CUSA00552")) {
+        if (!info.has_game) info.problems.push_back("CUSA00552 has no eboot.bin (copy still running?)");
+        else if (!info.game_sfo.ok) info.problems.push_back("CUSA00552 has no readable sce_sys/param.sfo");
+        else if (info.game_sfo.title_id != "CUSA00552")
+            info.problems.push_back("CUSA00552 holds " + info.game_sfo.title_id + ", not CUSA00552");
+    }
+    if (Exists(root / L"CUSA00552-patch")) {
+        if (!info.has_update) info.problems.push_back("CUSA00552-patch has no eboot.bin (copy still running?)");
+        else if (info.update_sfo.ok && info.update_sfo.title_id != "CUSA00552")
+            info.problems.push_back("CUSA00552-patch holds " + info.update_sfo.title_id + ", not CUSA00552");
+        else if (info.update_sfo.ok && info.update_sfo.app_ver != "01.11")
+            info.problems.push_back("the update is " + info.update_sfo.app_ver + "; this build needs 01.11");
+    }
     const fs::path boot = root / L"stage" / L"boot.json";
     if (!Exists(boot)) {
         info.error = "stage/boot.json is missing: run Stage-TLOU-Xbox.cmd on the PC";
@@ -103,6 +146,13 @@ StageInfo ReadStage(const fs::path& root) {
         }
         info.has_stage = info.args.size() >= 2;
         if (!info.has_stage) info.error = "stage/boot.json has no command line";
+        const std::string console_version = info.has_update && info.update_sfo.ok ? info.update_sfo.app_ver
+                                            : info.game_sfo.ok ? info.game_sfo.app_ver : "";
+        if (info.has_stage && !console_version.empty() && !info.game_version.empty() && info.game_version != "?" &&
+            info.game_version != console_version) {
+            info.problems.push_back("stage was made for game " + info.game_version + ", but the console has " +
+                                    console_version + ": run the setup on the PC again");
+        }
     } catch (const winrt::hresult_error& e) {
         info.error = "stage/boot.json: " + winrt::to_string(e.message());
     }

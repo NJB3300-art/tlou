@@ -14,6 +14,7 @@ built by GitHub Actions; whether the game starts on an Xbox depends on the limit
 | --- | --- |
 | `TLOU Launcher.exe` / `tlou_launcher.pyw` | The app's own launcher (controller-driven): game folder, motion blur, align contact shadows, background shaders, draw pipeline, frame statistics, Vulkan driver |
 | `TLOU Game.exe` / `run_game.py` | **Play** in the app (or Menu on the controller) |
+| Copying the game by hand | **Setup-TLOU-Xbox.cmd** on the PC + **Receive files over Wi-Fi** in the app, or a USB drive |
 | `gow3-probe.exe`, started by `probe_tlou.py` | `gow3-runtime.dll`, loaded and run inside the app (`gow3_uwp_run`) |
 | Python preparation at every start | Done once on the PC: `Stage-TLOU-Xbox.cmd` (`probe_tlou.py --stage`) |
 | SDL3 window, gamepad, keyboard, audio | The app's CoreWindow, Windows.Gaming.Input, CoreWindow keys and XAudio2, behind an SDL3 stand-in (`gow3_pc/uwp/sdl`) |
@@ -31,24 +32,32 @@ code is in `gow3_pc/uwp/` and `uwp-app/`; the edits to existing files are marked
 3. In Dev Home, set the app's type to **Game** (games get far more memory and GPU than apps; the
    runtime needs about 6 GB).
 
-## Prepare the game (on a PC, once)
+## Prepare the game and send it to the console (one click)
 
-1. Unzip `tlou-uwp-stage-kit.zip` (Python 3.10+ needed). Put your game folder `CUSA00552` and the
-   update as `CUSA00552-patch` next to the kit's folder (as for the PC version), or pass
-   `--game <folder>`.
-2. Run `Stage-TLOU-Xbox.cmd`. It prepares the game exactly as the PC version does at each start
-   and writes `uwp-stage\` (`boot.json` and the prepared files). The render resolution, aim assist,
-   PS4 Pro shadows, job sleep and v0.2.2's contact shadows at half resolution are fixed here (they
-   patch the game): set them with `TLOU_RESOLUTION=1920x1080`, `TLOU_AIM_ASSIST=0`,
-   `TLOU_AMBIENT_SHADOWS=quarter`, … before running it.
-3. Copy to an external drive (exFAT/NTFS), in a folder `TLOU`:
-   ```
-   E:\TLOU\CUSA00552\          the game
-   E:\TLOU\CUSA00552-patch\    update 1.11
-   E:\TLOU\stage\              the contents of uwp-stage
-   ```
-   The app also looks in its own `LocalState\TLOU` folder (upload with Device Portal's file
-   explorer) and on every drive letter.
+You need your own PS4 dump: the base game CUSA00552 and its update 1.11 (any folder names). The
+Steam game, *The Last of Us Part I*, is a different game and cannot be used.
+
+1. Unzip `tlou-uwp-stage-kit-….zip` on a Windows PC with Python 3.10+.
+2. On the Xbox, start the app and turn on **Receive files over Wi-Fi**: the TV shows an address
+   (`http://192.168.…:8077`) and a six-digit code. (Or skip this and use a USB drive.)
+3. On the PC, double-click **`Setup-TLOU-Xbox.cmd`**. It
+   - finds the game and the update on your drives by their `param.sfo` (or ask it with
+     `--game` / `--update`),
+   - prepares the game (`probe_tlou.py --stage`): the render resolution, aim assist, PS4 Pro
+     shadows, job sleep and half-resolution contact shadows are fixed here, as environment
+     variables such as `TLOU_RESOLUTION=1920x1080` set before you run it,
+   - sends everything to the Xbox over Wi-Fi (enter the address and code), or copies it to a USB
+     drive as `<drive>:\TLOU\CUSA00552`, `CUSA00552-patch` and `stage`.
+
+   Interrupted? Run it again: files already on the console are skipped, a half-sent file continues.
+
+**Without Python on the PC:** the address shown on the TV is also a web page. Open it in a browser,
+enter the code and pick the three folders (game, update, and a `uwp-stage` folder made on another PC
+with `Stage-TLOU-Xbox.cmd`).
+
+Files sent over Wi-Fi go to the app's own storage (`LocalState\TLOU`); the launcher looks there
+and on every drive. The launcher's **file check** reads each `param.sfo` and the stage, and tells
+you if the game, the update version or the stage do not match; Play waits until they do.
 
 ## Play
 

@@ -6,7 +6,7 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap mp rescap">
 
-  <Identity Name="TLOU.UwpPort" Publisher="CN=TLOU-UWP" Version="0.1.1.0" ProcessorArchitecture="x64" />
+  <Identity Name="TLOU.UwpPort" Publisher="CN=TLOU-UWP" Version="0.2.0.0" ProcessorArchitecture="x64" />
 
   <mp:PhoneIdentity PhoneProductId="6f2c7a51-3b8e-4d1a-9c55-2e0b7d4f8a13" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
 
@@ -41,8 +41,11 @@
   <Capabilities>
     <!-- Executable pages for the game's code (VirtualAllocFromApp / VirtualProtectFromApp). -->
     <Capability Name="codeGeneration" />
+    <!-- Wi-Fi transfer: the PC on the same network sends the game folders (port 8077). -->
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
     <!-- The game on an external drive (E:\TLOU) by its path. -->
-    <rescap:Capability Name="broadFileSystemAccess" />
     <uap:Capability Name="removableStorage" />
+    <rescap:Capability Name="broadFileSystemAccess" />
   </Capabilities>
 </Package>
