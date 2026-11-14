@@ -1,0 +1,125 @@
+WEBVTT
+
+00:00:00.500 --> 00:00:07.070
+Hey, welcome back! This is the setup guide for the newest build of The Last of Us Remastered on Xbox.
+
+00:00:07.450 --> 00:00:14.135
+And this time, there's no USB drive needed. Your PC sends the whole game to the Xbox over Wi-Fi!
+
+00:00:15.015 --> 00:00:16.725
+So, what's new? Three things.
+
+00:00:17.105 --> 00:00:23.343
+First: Wi-Fi transfer. The launcher on your Xbox can now receive the game straight from your PC.
+
+00:00:23.723 --> 00:00:29.997
+Second: a one-click setup. A single file on your PC finds your game, prepares it, and sends it over.
+
+00:00:30.377 --> 00:00:35.045
+And third: a file check. Before you play, the launcher makes sure everything matches.
+
+00:00:35.925 --> 00:00:37.055
+Here's what you need.
+
+00:00:37.435 --> 00:00:40.467
+An Xbox Series X or S, in Developer Mode.
+
+00:00:40.847 --> 00:00:45.143
+A Windows PC on the same network, with Python 3.10 or newer.
+
+00:00:45.523 --> 00:00:52.513
+And your own PS4 dump of the game, CUSA00552, plus update 1.11.
+
+00:00:52.893 --> 00:00:58.502
+Quick heads-up: the Steam version, The Last of Us Part I, is a different game, so it won't work here.
+
+00:00:59.382 --> 00:01:04.513
+Step one: install the app. Grab the Xbox zip from the newest release on GitHub.
+
+00:01:04.893 --> 00:01:12.214
+In Device Portal, under My games and apps, add the .msix package, along with the VCLibs dependency.
+
+00:01:12.594 --> 00:01:18.310
+Then, in Dev Home, set the app type to Game. That gives it way more memory, and it really needs it!
+
+00:01:19.190 --> 00:01:24.552
+Step two happens on the Xbox. Open the app, and pick Receive files over Wi-Fi.
+
+00:01:24.932 --> 00:01:29.971
+Press A, and it switches on. The TV now shows an address, and a six-digit code.
+
+00:01:30.351 --> 00:01:34.398
+Keep this screen open. You'll type both of these on your PC in a second.
+
+00:01:35.279 --> 00:01:41.507
+Step three, on your PC. Unzip the stage kit, and double-click Setup TLOU Xbox.
+
+00:01:41.887 --> 00:01:47.295
+It looks through your drives for the game and the update, all by itself. The folder names don't matter.
+
+00:01:47.675 --> 00:01:52.299
+Then it prepares the game for the console. The first time, that takes a few minutes.
+
+00:01:52.679 --> 00:01:55.917
+When it asks how to send the files, choose one, for Wi-Fi.
+
+00:01:56.297 --> 00:01:59.819
+Type in the address and the code from your TV, and off it goes!
+
+00:02:00.699 --> 00:02:05.354
+Now the game travels over your network. It's a big one, so this part takes a while.
+
+00:02:05.734 --> 00:02:09.035
+A wired connection on either end makes it a lot faster.
+
+00:02:09.415 --> 00:02:13.337
+And if anything interrupts it, no problem. Just run the setup again.
+
+00:02:13.717 --> 00:02:19.472
+Files that are already on the Xbox get skipped, and a half-sent file carries on right where it stopped.
+
+00:02:19.852 --> 00:02:21.388
+And there it is. All done!
+
+00:02:22.268 --> 00:02:26.584
+Don't want to use Python? That address on the TV is also a web page.
+
+00:02:26.964 --> 00:02:29.326
+Open it in your browser, and type in the code.
+
+00:02:29.706 --> 00:02:34.903
+Pick the game folder, the update folder, and a stage folder that you made on another PC.
+
+00:02:35.283 --> 00:02:37.856
+Hit Send, and it does the exact same transfer.
+
+00:02:38.736 --> 00:02:43.530
+Last step: back to the Xbox. The launcher spots the new files automatically.
+
+00:02:43.910 --> 00:02:49.470
+Its file check looks at the game, the update version, and the stage. Here, everything says OK.
+
+00:02:49.850 --> 00:02:53.010
+So pick Play, or just press the menu button, and you're in!
+
+00:02:53.890 --> 00:02:55.976
+A few quick fixes, just in case.
+
+00:02:56.356 --> 00:03:02.514
+Wrong code? Use the six digits on the TV right now. They change every time you turn the receiver on.
+
+00:03:02.894 --> 00:03:08.193
+Can't connect? Make sure both are on the same network, and type the address exactly as shown.
+
+00:03:08.573 --> 00:03:12.900
+If the file check finds a problem, the launcher tells you exactly what's wrong.
+
+00:03:13.280 --> 00:03:17.594
+And if the app closes, the logs in its LocalState folder will tell you why.
+
+00:03:17.974 --> 00:03:26.887
+One honest heads-up: the Xbox has no Vulkan driver yet, so the game may stop when it starts its renderer. The help page has the details.
+
+00:03:27.767 --> 00:03:33.353
+And that's it! Both help videos, and every new build, are on the GitHub page. Have fun out there!
+

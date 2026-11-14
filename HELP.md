@@ -3,8 +3,12 @@
 **Help page with the video guide (narrated, with captions):**
 https://njb3300-art.github.io/tlou/help/
 
-The same page in this repository: [`docs/help/index.html`](docs/help/index.html) ·
-video: [`docs/help/help.mp4`](docs/help/help.mp4) · captions: [`docs/help/help.vtt`](docs/help/help.vtt)
+The same page in this repository: [`docs/help/index.html`](docs/help/index.html)
+
+| Video | For | Files |
+| --- | --- | --- |
+| **2. Wi-Fi setup** | build v0.2.2-uwp.2 and newer | [`help-wifi.mp4`](docs/help/help-wifi.mp4) · captions [`help-wifi.vtt`](docs/help/help-wifi.vtt) |
+| 1. USB setup | the first builds | [`help.mp4`](docs/help/help.mp4) · captions [`help.vtt`](docs/help/help.vtt) |
 
 ## Quick steps
 

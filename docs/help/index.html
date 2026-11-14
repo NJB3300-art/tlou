@@ -40,7 +40,17 @@
      <a href="https://github.com/ravencaio/tlou-remastered-pc">ravencaio/tlou-remastered-pc</a>.
      No game files are included: you need your own dump of the game.</p>
 
-  <h2>Video guide</h2>
+  <h2>Video 2: Wi-Fi setup (build v0.2.2-uwp.2 and newer)</h2>
+  <video controls preload="metadata" playsinline>
+    <source src="help-wifi.mp4" type="video/mp4">
+    <track kind="captions" src="help-wifi.vtt" srclang="en" label="English (CC)" default>
+    Your browser cannot play this video. <a href="help-wifi.mp4">Download it</a>.
+  </video>
+  <p class="note">3½ minutes, narrated. No USB drive needed: the one-click setup on your PC sends the game to the
+     Xbox over Wi-Fi. Captions are on by default (CC button in the player).
+     <a href="help-wifi.mp4" download>Download the video</a> · <a href="help-wifi.vtt" download>captions (.vtt)</a></p>
+
+  <h2>Video 1: USB setup (first builds)</h2>
   <video controls preload="metadata" playsinline>
     <source src="help.mp4" type="video/mp4">
     <track kind="captions" src="help.vtt" srclang="en" label="English (CC)" default>
@@ -57,7 +67,20 @@
     <li>A USB drive formatted <strong>exFAT</strong> or <strong>NTFS</strong></li>
   </ul>
 
-  <h2>Step by step</h2>
+  <h2>Step by step: Wi-Fi (newest builds)</h2>
+  <ol>
+    <li><strong>Install the app</strong> from the newest release's <code>tlou-uwp-xbox-….zip</code> with Device Portal
+      (the <code>.msix</code> plus <code>Microsoft.VCLibs.x64.14.00.appx</code>), and set its type to <strong>Game</strong> in Dev Home.</li>
+    <li><strong>On the Xbox:</strong> start the app and turn on <em>Receive files over Wi-Fi</em>. The TV shows an
+      address (<code>http://192.168.…:8077</code>) and a six-digit code.</li>
+    <li><strong>On the PC</strong> (same network, Python 3.10+): unzip <code>tlou-uwp-stage-kit-….zip</code> and
+      double-click <code>Setup-TLOU-Xbox.cmd</code>. It finds your PS4 dump (CUSA00552 + update 1.11), prepares it, and
+      sends it: choose <em>1) Over Wi-Fi</em>, then type the address and code. Interrupted? Run it again; it continues.
+      <br>No Python? Open the address in a browser, enter the code and pick the three folders.</li>
+    <li><strong>On the Xbox:</strong> the launcher's file check should say <em>OK</em>. Choose <strong>Play</strong>.</li>
+  </ol>
+
+  <h2>Step by step: USB drive</h2>
   <ol>
     <li><strong>Download the release.</strong> On the
       <a href="https://github.com/NJB3300-art/tlou/releases">releases page</a>, take the newest one:
@@ -99,6 +122,12 @@
         <td>Open the app again: it shows the end of <code>boot.log</code>. The full file says why.</td></tr>
     <tr><td>“gow3-runtime.dll could not be loaded (error 126)”</td>
         <td>A DLL the game needs is missing on the console. <code>runtime-imports.txt</code> in the Xbox zip lists them all.</td></tr>
+    <tr><td>The PC says the code is wrong</td>
+        <td>Use the six digits on the TV now: they change each time the receiver is turned on.</td></tr>
+    <tr><td>The PC can't reach the Xbox</td>
+        <td>Both on the same network; type the address exactly as the TV shows it (port 8077).</td></tr>
+    <tr><td>The file check finds a problem</td>
+        <td>The launcher says what doesn't match (game, update version, or stage). Run <code>Setup-TLOU-Xbox.cmd</code> again.</td></tr>
     <tr><td>Launcher says <em>stage\boot.json missing</em></td>
         <td>Run <code>Stage-TLOU-Xbox.cmd</code> again and copy <code>uwp-stage</code> to <code>TLOU\stage</code>.</td></tr>
   </table>
