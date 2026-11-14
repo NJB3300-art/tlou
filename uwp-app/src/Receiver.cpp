@@ -5,12 +5,8 @@
 #include <cctype>
 #include <io.h>
 
-#include <winrt/Windows.Networking.Connectivity.h>
-#include <winrt/Windows.Networking.Sockets.h>
-#include <winrt/Windows.Networking.h>
-#include <winrt/Windows.Storage.Streams.h>
-
 using namespace winrt;
+using winrt::Windows::Foundation::IAsyncAction;
 using namespace winrt::Windows::Networking;
 using namespace winrt::Windows::Networking::Connectivity;
 using namespace winrt::Windows::Networking::Sockets;
