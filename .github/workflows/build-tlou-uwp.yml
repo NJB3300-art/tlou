@@ -154,11 +154,16 @@ jobs:
       - name: Mesa source and patches
         shell: pwsh
         run: |
-          curl.exe -sfLo mesa.tar.xz "https://archive.mesa3d.org/mesa-$env:MESA_VERSION.tar.xz"
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Host "Downloading Mesa $env:MESA_VERSION"
+          curl.exe -fL --retry 4 --retry-delay 10 --connect-timeout 30 --max-time 900 -o mesa.tar.xz "https://archive.mesa3d.org/mesa-$env:MESA_VERSION.tar.xz"
+          if ($LASTEXITCODE -ne 0) { Write-Error "Mesa download failed"; exit 1 }
           $hash = (Get-FileHash mesa.tar.xz -Algorithm SHA256).Hash.ToLower()
           if ($hash -ne $env:MESA_SHA256) { Write-Error "mesa.tar.xz: sha256 $hash"; exit 1 }
-          tar -xf mesa.tar.xz
+          Write-Host "Extracting (7-Zip)"
+          & "C:\Program Files\7-Zip\7z.exe" x mesa.tar.xz -y -bso0 -bsp0
+          & "C:\Program Files\7-Zip\7z.exe" x mesa.tar -y -bso0 -bsp0
+          if (-not (Test-Path "mesa-$env:MESA_VERSION\meson.build")) { Write-Error "extraction failed"; exit 1 }
+          Write-Host "Patching"
           curl.exe -sfLo dxil-hash.patch "https://raw.githubusercontent.com/mmozeiko/build-mesa/$env:BUILD_MESA_COMMIT/patches/dxil-hash.patch"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           cd "mesa-$env:MESA_VERSION"
