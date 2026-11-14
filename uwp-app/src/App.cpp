@@ -319,12 +319,25 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         install_dir = fs::path(std::wstring(Package::Current().InstalledLocation().Path()));
         user_dir = local_state / L"user";
         std::error_code ignored;
+        // Something on the TV first: if a later step hangs, the screen says where it stopped.
+        if (launcher.Create(core_window)) {
+            Launcher::View starting;
+            starting.status = L"Starting\u2026";
+            starting.info.push_back(L"If this stays here, hold View + Menu for 3 seconds to quit,");
+            starting.info.push_back(L"then send LocalState\\app.log.");
+            launcher.Draw(starting);
+            AppLog("first frame drawn");
+        } else {
+            AppLog("launcher: Direct3D failed at start");
+        }
         fs::create_directories(user_dir / L"cache" / L"mesa", ignored);
         fs::create_directories(local_state / L"TLOU", ignored);
         settings = tlou::Settings::Load(local_state / L"launcher.json");
+        AppLog("settings loaded");
         input = std::make_unique<tlou::Input>();
         receiver = std::make_unique<tlou::Receiver>(local_state / L"TLOU");
         audio = std::make_unique<tlou::Audio>();
+        AppLog("input and audio ready");
         FindGame();
         AppLog("game folders found: " + std::to_string(roots.size()) +
                (stage.has_stage ? ", stage ready" : ", no stage"));
@@ -334,7 +347,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
             if (!log_tail.empty()) status = L"The last game run ended like this (boot.log):";
         }
 
-        if (!launcher.Create(core_window)) status = L"Direct3D could not start the launcher (see app.log)";
+        if (!launcher.Valid() && !launcher.Create(core_window)) status = L"Direct3D could not start the launcher (see app.log)";
         else AppLog("launcher drawn");
         const auto dispatcher = core_window.Dispatcher();
         while (!closing) {
@@ -346,9 +359,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
                     AfterGame();
                     continue;
                 }
+                QuitComboCheck();
                 std::this_thread::sleep_for(std::chrono::milliseconds(4));
                 continue;
             }
+            QuitComboCheck();
             HandleInput();
             // Files arrived over Wi-Fi: look at the folders again (at most every 2 seconds).
             const auto now = std::chrono::steady_clock::now();
@@ -362,6 +377,106 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
     }
 
 private:
+    // View + Menu held for 3 seconds: leave the app, whatever the game is doing. The next start
+    // shows the end of boot.log on the TV.
+    void QuitComboCheck() {
+        if (!input) return;
+        gow3_uwp_gamepad pad{};
+        bool held = false;
+        for (int i = 0; i < 4; ++i) {
+            if (input->Gamepad(i, pad) && (pad.buttons & GOW3_UWP_PAD_VIEW) && (pad.buttons & GOW3_UWP_PAD_MENU)) held = true;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (!held) {
+            quit_since = {};
+            return;
+        }
+        if (quit_since == std::chrono::steady_clock::time_point{}) quit_since = now;
+        if (now - quit_since > std::chrono::seconds(3)) {
+            AppLog("View + Menu held: quitting");
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+    }
+
+    // ---- Dozen (vulkan_dzn.dll from mesa-uwp) hands its swapchain to the app; Windows.UI.Composition
+    // shows it in the CoreWindow (no XAML). Called on the game's render thread.
+    static long __cdecl AttachSwapChainThunk(void* context, void* swapchain) {
+        return static_cast<App*>(context)->AttachSwapChain(swapchain);
+    }
+    static void __cdecl DozenLog(void*, const char* message) {
+        if (message) AppLog(std::string("dozen: ") + message);
+    }
+
+    long AttachSwapChain(void* swapchain) {
+        if (!swapchain) return E_POINTER;
+        struct Attachment {
+            winrt::com_ptr<::IUnknown> chain;
+            HRESULT result = E_PENDING;
+            HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        };
+        auto attachment = std::make_shared<Attachment>();
+        attachment->chain.copy_from(static_cast<::IUnknown*>(swapchain));
+        auto work = [this, attachment] {
+            try {
+                if (!compositor) {
+                    compositor = winrt::Windows::UI::Composition::Compositor();
+                    target = compositor.CreateTargetForCurrentView();
+                    visual = compositor.CreateSpriteVisual();
+                    visual.RelativeSizeAdjustment({1.0f, 1.0f});
+                    target.Root(visual);
+                }
+                auto interop = compositor.as<ABI::Windows::UI::Composition::ICompositorInterop>();
+                winrt::com_ptr<ABI::Windows::UI::Composition::ICompositionSurface> surface;
+                attachment->result = interop->CreateCompositionSurfaceForSwapChain(attachment->chain.get(), surface.put());
+                if (SUCCEEDED(attachment->result)) {
+                    auto brush = compositor.CreateSurfaceBrush(
+                        surface.as<winrt::Windows::UI::Composition::ICompositionSurface>());
+                    brush.Stretch(winrt::Windows::UI::Composition::CompositionStretch::Fill);
+                    visual.Brush(brush);
+                }
+            } catch (const winrt::hresult_error& e) {
+                attachment->result = e.code();
+            }
+            AppLog("dozen: swapchain attached, hr=" + std::to_string(attachment->result));
+            SetEvent(attachment->done);
+        };
+        if (core_window.Dispatcher().HasThreadAccess()) {
+            work();
+        } else {
+            core_window.Dispatcher().RunAsync(CoreDispatcherPriority::High, work);
+            if (WaitForSingleObject(attachment->done, 10000) != WAIT_OBJECT_0) {
+                AppLog("dozen: swapchain attachment timed out");
+                return E_ABORT;
+            }
+        }
+        CloseHandle(attachment->done);
+        return attachment->result;
+    }
+
+    // Ready Dozen for this window before the game starts (when the package has it).
+    void PrepareDozen() {
+        if (settings.vulkan_driver != 0) return;
+        HMODULE dozen = LoadPackagedLibrary(L"vulkan_dzn.dll", 0);
+        if (!dozen) {
+            AppLog("dozen: vulkan_dzn.dll not loaded, error " + std::to_string(GetLastError()));
+            return;
+        }
+        using SetWindow = void(__cdecl*)(void*, int, int);
+        using SetAttach = void(__cdecl*)(long(__cdecl*)(void*, void*), void*);
+        using SetLog = void(__cdecl*)(void (*)(void*, const char*), void*);
+        auto set_window = reinterpret_cast<SetWindow>(GetProcAddress(dozen, "uwp_set_window_reference"));
+        auto set_attach = reinterpret_cast<SetAttach>(GetProcAddress(dozen, "mesa_uwp_set_swapchain_attach_callback"));
+        auto set_log = reinterpret_cast<SetLog>(GetProcAddress(dozen, "mesa_uwp_set_log_callback"));
+        if (!set_window || !set_attach) {
+            AppLog("dozen: this vulkan_dzn.dll has no UWP exports");
+            return;
+        }
+        if (set_log) set_log(&App::DozenLog, nullptr);
+        set_window(state.core_window, state.width, state.height);
+        set_attach(&App::AttachSwapChainThunk, this);
+        AppLog("dozen: ready for " + std::to_string(state.width) + "x" + std::to_string(state.height));
+    }
+
     void UpdateSize() {
         if (!core_window) return;
         const auto bounds = core_window.Bounds();
@@ -584,6 +699,7 @@ private:
 
         // The launcher's swap chain lets go of the window before the game's Vulkan surface takes it.
         launcher.Destroy();
+        PrepareDozen();
         input->ClearKeys();
         host = tlou::MakeHostTable(state, *input, *audio);
         set_host(&host);
@@ -613,6 +729,10 @@ private:
     }
 
     void AfterGame() {
+        if (target) target.Root(nullptr);
+        visual = nullptr;
+        target = nullptr;
+        compositor = nullptr;
         launcher.Create(core_window);
         status = L"The game stopped (code " + std::to_wstring(exit_code) + L"). The end of boot.log:";
         status_warn = exit_code != 0;
@@ -645,6 +765,10 @@ private:
     tlou::StageInfo stage;
 
     HMODULE runtime = nullptr;
+    std::chrono::steady_clock::time_point quit_since{};
+    winrt::Windows::UI::Composition::Compositor compositor{nullptr};
+    winrt::Windows::UI::Composition::CompositionTarget target{nullptr};
+    winrt::Windows::UI::Composition::SpriteVisual visual{nullptr};
     gow3_uwp_set_host_fn set_host = nullptr;
     gow3_uwp_setenv_fn set_env = nullptr;
     gow3_uwp_run_fn run = nullptr;

@@ -31,6 +31,8 @@
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.ViewManagement.h>
+#include <winrt/Windows.UI.Composition.h>
+#include <windows.ui.composition.interop.h>
 
 #include <algorithm>
 #include <atomic>

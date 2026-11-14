@@ -119,24 +119,28 @@ jobs:
           path: kit/
 
   dozen:
-    name: Mesa Dozen (Vulkan on Direct3D 12)
+    name: Mesa Dozen for Xbox UWP (Vulkan on Direct3D 12)
     runs-on: windows-2022
     timeout-minutes: 150
     env:
-      MESA_VERSION: 26.3.0
-      MESA_SHA256: 91d729aa68bb89e4ec857841300bbe922bcb3e52b1f97566ca83930d3b28343a
-      # mmozeiko/build-mesa: its recipe for Mesa on Windows and its dxil-hash.patch (Mesa signs its own
-      # shaders when dxil.dll is missing or refused)
-      BUILD_MESA_COMMIT: 68725fb5d8e12c25efbb655780747bda417a53c1
+      # The Xbox UWP build of Mesa (26.2.2 with UWP hooks: the driver hands its swapchain to the app)
+      # from rodrigoandrigo/Shadps4-UWP (GPL-2.0; Mesa itself is MIT), as its scripts/build-dozen.ps1 builds it.
+      MESA_UWP_REPO: rodrigoandrigo/Shadps4-UWP
+      MESA_UWP_COMMIT: a245e45dc4b72959e6d983aa54f18f4f5f0d1c59
     steps:
-      - name: Keep line endings as committed (the patch has LF)
+      - name: Mesa for Xbox UWP (externals/mesa-uwp only)
         shell: pwsh
-        run: git config --global core.autocrlf false
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          path: self
+        run: |
+          git init -q mesa-src
+          cd mesa-src
+          git remote add origin "https://github.com/$env:MESA_UWP_REPO"
+          git config core.sparseCheckout true
+          "externals/mesa-uwp/`n" | Out-File -Encoding ascii .git/info/sparse-checkout
+          git fetch -q --depth 1 --filter=blob:limit=20m origin $env:MESA_UWP_COMMIT
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git checkout -q FETCH_HEAD
+          if (-not (Test-Path externals/mesa-uwp/meson.build)) { Write-Error "no mesa-uwp tree"; exit 1 }
+          Get-Content externals/mesa-uwp/VERSION
 
       - uses: actions/setup-python@v5
         with:
@@ -149,45 +153,51 @@ jobs:
           mkdir winflexbison && cd winflexbison
           curl -sfL -o wfb.zip https://github.com/lexxmark/winflexbison/releases/download/v2.5.24/win_flex_bison-2.5.24.zip || exit /b 1
           tar -xf wfb.zip || exit /b 1
+          copy win_flex.exe flex.exe >nul && copy win_bison.exe bison.exe >nul
           echo %CD%>> %GITHUB_PATH%
-
-      - name: Mesa source and patches
-        shell: pwsh
-        run: |
-          Write-Host "Downloading Mesa $env:MESA_VERSION"
-          curl.exe -fL --retry 4 --retry-delay 10 --connect-timeout 30 --max-time 900 -o mesa.tar.xz "https://archive.mesa3d.org/mesa-$env:MESA_VERSION.tar.xz"
-          if ($LASTEXITCODE -ne 0) { Write-Error "Mesa download failed"; exit 1 }
-          $hash = (Get-FileHash mesa.tar.xz -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne $env:MESA_SHA256) { Write-Error "mesa.tar.xz: sha256 $hash"; exit 1 }
-          Write-Host "Extracting (7-Zip)"
-          & "C:\Program Files\7-Zip\7z.exe" x mesa.tar.xz -y -bso0 -bsp0
-          & "C:\Program Files\7-Zip\7z.exe" x mesa.tar -y -bso0 -bsp0
-          if (-not (Test-Path "mesa-$env:MESA_VERSION\meson.build")) { Write-Error "extraction failed"; exit 1 }
-          Write-Host "Patching"
-          curl.exe -sfLo dxil-hash.patch "https://raw.githubusercontent.com/mmozeiko/build-mesa/$env:BUILD_MESA_COMMIT/patches/dxil-hash.patch"
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          cd "mesa-$env:MESA_VERSION"
-          git apply --whitespace=nowarn ../dxil-hash.patch
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          git apply --whitespace=nowarn ../self/uwp-app/mesa/mesa-uwp-corewindow.patch
-          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Build vulkan_dzn.dll
-        shell: cmd
+      - name: Build vulkan_dzn.dll (UWP app container)
+        shell: pwsh
         run: |
-          rem Window, GDI and DirectComposition calls are for desktop windows: loaded only if used, so
-          rem the driver still loads where those DLLs are missing.
-          set LINK=/DELAYLOAD:user32.dll /DELAYLOAD:gdi32.dll /DELAYLOAD:dcomp.dll delayimp.lib version.lib ntdll.lib
-          meson setup build mesa-%MESA_VERSION% --prefix="%CD%\dozen" --default-library=static --wrap-mode=default ^
-            -Dbuildtype=release -Db_ndebug=true -Db_vscrt=mt "-Dc_args=-wd4189 -wd4319" ^
-            -Dllvm=disabled -Dplatforms=windows -Dvideo-codecs= -Dgallium-drivers= ^
-            -Dvulkan-drivers=microsoft-experimental -Dopengl=false -Degl=disabled -Dgles1=disabled -Dgles2=disabled || (
-              type build\meson-logs\meson-log.txt | findstr /i "error" & exit /b 1 )
-          ninja -C build install || exit /b 1
+          $store = (Join-Path $env:VCToolsInstallDir 'lib\x64\store').Replace('\', '/')
+          # A cross file: the app-container test programs meson would run cannot run on this machine.
+          @"
+          [binaries]
+          c = 'cl.exe'
+          cpp = 'cl.exe'
+          bison = 'bison'
+          flex = 'flex'
+
+          [host_machine]
+          system = 'windows'
+          cpu_family = 'x86_64'
+          cpu = 'x86_64'
+          endian = 'little'
+
+          [properties]
+          skip_sanity_check = true
+
+          [built-in options]
+          c_args = ['/DWINAPI_FAMILY=WINAPI_FAMILY_APP', '/D_XBOX_UWP']
+          cpp_args = ['/DWINAPI_FAMILY=WINAPI_FAMILY_APP', '/D_XBOX_UWP']
+          c_link_args = ['/APPCONTAINER', 'WindowsApp.lib', '/LIBPATH:$store']
+          cpp_link_args = ['/APPCONTAINER', 'WindowsApp.lib', '/LIBPATH:$store']
+          "@ | Out-File -Encoding ascii uwp-cross.ini
+          python -m mesonbuild.mesonmain setup build mesa-src/externals/mesa-uwp --cross-file uwp-cross.ini `
+            -Dbuildtype=release -Ddefault_library=static -Duwp=true `
+            -Dplatforms=windows -Dopengl=false -Dgallium-drivers= `
+            -Dvulkan-drivers=microsoft-experimental -Dllvm=disabled `
+            -Dglx=disabled -Degl=disabled -Dgles1=disabled -Dgles2=disabled `
+            -Dgbm=disabled -Dshared-glapi=disabled -Dmicrosoft-clc=disabled `
+            -Dbuild-tests=false -Dzstd=disabled -Dspirv-tools=disabled `
+            -Dforce_fallback_for=zlib -Db_pch=false
+          if ($LASTEXITCODE -ne 0) { Get-Content build/meson-logs/meson-log.txt -Tail 80; exit 1 }
+          python -m mesonbuild.mesonmain compile -C build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Collect the driver and dxil.dll
         shell: pwsh
@@ -195,18 +205,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
-          $dll = Get-ChildItem -Recurse dozen -Filter vulkan_dzn.dll | Select-Object -First 1
+          $dll = Get-ChildItem -Recurse build -Filter vulkan_dzn.dll | Select-Object -First 1
           if (-not $dll) { Write-Error "vulkan_dzn.dll was not built"; exit 1 }
           Copy-Item $dll.FullName out
-          # dxil.dll: Microsoft's validator and signer from the DirectX Shader Compiler release (redistributable)
           gh release download --repo microsoft/DirectXShaderCompiler --pattern "dxc_*.zip" --dir dxc
           if ($LASTEXITCODE -eq 0) {
             Expand-Archive (Get-ChildItem dxc -Filter "dxc_*.zip" | Select-Object -First 1).FullName dxc\x
             Copy-Item dxc\x\bin\x64\dxil.dll out
             Get-ChildItem dxc\x -Filter "LICENSE*" | ForEach-Object { Copy-Item $_.FullName ("out\DXC-" + $_.Name) }
-          } else { Write-Warning "no DXC release found: Mesa signs shaders itself (dxil-hash.patch)" }
-          Copy-Item "mesa-$env:MESA_VERSION\docs\license.rst" out\LICENSE-mesa.txt -ErrorAction SilentlyContinue
+          } else { Write-Warning "no DXC release found" }
+          Copy-Item mesa-src\externals\mesa-uwp\docs\license.rst out\LICENSE-mesa.txt -ErrorAction SilentlyContinue
           dumpbin /nologo /dependents out\vulkan_dzn.dll | Out-File -Encoding utf8 out\dozen-imports.txt
+          dumpbin /nologo /exports out\vulkan_dzn.dll | Select-String "uwp|vk_icd" | Out-File -Encoding utf8 -Append out\dozen-imports.txt
           Get-Content out\dozen-imports.txt
           Get-ChildItem out | Select-Object Name, Length
 
@@ -327,9 +337,10 @@ jobs:
           prerelease: true
           body: |
             Experimental UWP build of the TLOU Remastered PC port (ravencaio/tlou-remastered-pc, GPL-2.0) for Xbox Developer Mode.
-            What's new: a Vulkan driver for the Xbox. The package carries Mesa's Dozen (Vulkan on Direct3D 12,
-            Mesa 26.3.0) patched to draw into the app's CoreWindow, and dxil.dll to sign its shaders.
-            Experimental and untested on a console; boot.log says what failed. Package version 0.3.0.0.
+            What's new: the Vulkan driver is now the Xbox UWP build of Mesa Dozen from Shadps4-UWP (already
+            rendering on consoles); the app shows its swapchain through Windows.UI.Composition. The launcher draws
+            at once, and holding View + Menu for 3 s quits a stuck game (the next start shows boot.log).
+            Package version 0.3.1.0.
             Also in this build: Wi-Fi transfer, the file check, and Setup-TLOU-Xbox.cmd (one-click setup).
 
             tlou-uwp-xbox-*.zip: the app package, its dependency packages and the signing certificate.

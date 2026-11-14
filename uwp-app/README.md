@@ -68,15 +68,14 @@ settings (`tlou.ini`), the shader cache and `boot.log` are in the app's `LocalSt
 ## Known limits
 
 - **Rendering on Xbox (experimental).** The game draws with Vulkan, and the console has no Vulkan
-  driver. From v0.2.2-uwp.3 the package carries one: Mesa's **Dozen** (`vulkan_dzn.dll`, Vulkan on
-  Direct3D 12, Mesa 26.3.0), built by the workflow with
-  [`uwp-app/mesa/mesa-uwp-corewindow.patch`](mesa/mesa-uwp-corewindow.patch): the swapchain is made
-  for the app's CoreWindow (the app passes it as `MESA_WSI_COREWINDOW`), with no desktop window or
-  DirectComposition, and packaged DLLs load with `LoadPackagedLibrary`. `dxil.dll` (DirectX Shader
-  Compiler) validates and signs the shaders. *Vulkan driver* in the launcher: **Auto** uses Dozen;
-  *Khronos loader* tries `vulkan-1.dll`. Untested on a console: Dozen implements Vulkan 1.1 plus
-  extensions on top of Direct3D 12, and features the renderer needs may be missing there; `boot.log`
-  says what failed. `dozen-imports.txt` in the release lists what the driver needs from the system.
+  driver. The package carries Mesa's **Dozen** (`vulkan_dzn.dll`, Vulkan on Direct3D 12) in its Xbox
+  UWP build from [rodrigoandrigo/Shadps4-UWP](https://github.com/rodrigoandrigo/Shadps4-UWP)
+  (`externals/mesa-uwp`, Mesa 26.2.2 with UWP hooks; already rendering shadPS4 on consoles), built by
+  the workflow. The driver hands its swapchain to the app, which shows it with Windows.UI.Composition.
+  `dxil.dll` (DirectX Shader Compiler) signs the shaders. Untested with this game on a console:
+  `boot.log` and `app.log` say what failed.
+- **Stuck screen?** Hold **View + Menu for 3 seconds**: the app quits, and its next start shows the end
+  of `boot.log` on the TV.
 - **Memory.** The PC port needs about 6 GB; Developer Mode games get about 5 GiB. Expect the game to
   run out of memory until its settings are reduced for the console.
 - **Write+execute memory.** If the console refuses pages that are writable and executable at
