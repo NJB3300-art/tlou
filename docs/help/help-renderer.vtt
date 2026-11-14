@@ -1,0 +1,116 @@
+WEBVTT
+
+00:00:00.500 --> 00:00:06.944
+Hey again! This is help video number three, for the newest build of The Last of Us Remastered on Xbox.
+
+00:00:07.324 --> 00:00:12.428
+This one is all about the big new piece: a way for the Xbox to actually draw the game.
+
+00:00:13.308 --> 00:00:19.323
+Here's the problem it solves. The game draws with Vulkan, and the Xbox doesn't have a Vulkan driver.
+
+00:00:19.703 --> 00:00:26.529
+So this build brings its own: Mesa's Dozen driver. It turns every Vulkan call into Direct3D 12.
+
+00:00:26.909 --> 00:00:30.661
+And Direct3D 12 is something the Xbox speaks fluently.
+
+00:00:31.041 --> 00:00:36.716
+We patched Dozen so it draws straight into the app's own window, which is how Xbox apps have to do it.
+
+00:00:37.596 --> 00:00:40.473
+Two new files ride along inside the app package.
+
+00:00:40.853 --> 00:00:46.719
+The driver itself, vulkan dzn dot dll, built from Mesa 26.3.0.
+
+00:00:47.099 --> 00:00:52.840
+And dxil.dll, from Microsoft, which signs the shaders Dozen creates.
+
+00:00:53.220 --> 00:00:57.661
+GitHub builds both automatically, so there's nothing extra for you to install.
+
+00:00:58.541 --> 00:01:06.651
+Step one: update the app. Download the Xbox zip from release v0.2.2-uwp.3 on GitHub.
+
+00:01:07.031 --> 00:01:11.442
+In Device Portal, add the new .msix package, just like before.
+
+00:01:11.822 --> 00:01:18.392
+It's version 0.3.0.0, so it installs right over the old one. Your game files and saves stay put.
+
+00:01:18.772 --> 00:01:22.976
+If this is your very first time, video two walks you through the whole setup.
+
+00:01:23.856 --> 00:01:27.994
+Step two: open the app. In the side panel, look for the renderer line.
+
+00:01:28.374 --> 00:01:34.756
+It should say Mesa Dozen, Vulkan on Direct3D 12. That means the driver made it into the package.
+
+00:01:35.136 --> 00:01:40.515
+There's also a new setting called Vulkan driver. Leave it on Auto, and the app uses Dozen.
+
+00:01:40.895 --> 00:01:46.608
+The other choice, Khronos loader, is only for testing. Most Xboxes won't have what it needs.
+
+00:01:47.488 --> 00:01:50.377
+Step three: the game files. Nothing changed here.
+
+00:01:50.757 --> 00:01:55.129
+If you haven't sent them yet, turn on Receive files over Wi-Fi on the Xbox,
+
+00:01:55.509 --> 00:01:59.761
+and run Setup TLOU Xbox on your PC, choosing Wi-Fi.
+
+00:02:00.140 --> 00:02:05.430
+Already sent them with the last build? Great. They're still there, and the setup skips them anyway.
+
+00:02:05.810 --> 00:02:08.508
+Either way, wait for the file check to say OK.
+
+00:02:09.388 --> 00:02:13.193
+Step four: press Play. And here's an honest look at what to expect.
+
+00:02:13.573 --> 00:02:19.707
+The first launch is slow. Dozen builds and signs every shader once, and then caches it for next time.
+
+00:02:20.087 --> 00:02:25.263
+This is experimental. Nobody has run it on a console yet, so you're the first to try it!
+
+00:02:25.643 --> 00:02:34.123
+It might stop early, maybe on a Vulkan feature Dozen doesn't have, or because Xbox gives games only about five gigabytes of memory.
+
+00:02:34.503 --> 00:02:39.010
+If it does, that's not a dead end. The logs tell us exactly what to fix next.
+
+00:02:39.890 --> 00:02:46.680
+So, step five: grab the logs. In Device Portal, open the file explorer, then Local App Data, then the app.
+
+00:02:47.060 --> 00:02:51.603
+Inside Local State, you'll find boot dot log, which shows what the game did,
+
+00:02:51.983 --> 00:02:54.559
+and app dot log, which shows what the app did.
+
+00:02:54.939 --> 00:02:59.610
+Send those two, and we can see exactly how far it got, and what to fix next.
+
+00:03:00.490 --> 00:03:01.704
+A few quick fixes.
+
+00:03:02.084 --> 00:03:07.549
+If the renderer line says no Vulkan driver, you're on an older package. Install the new one.
+
+00:03:07.929 --> 00:03:15.321
+Error 126 when you press Play means a system file is missing on the console. app dot log says which.
+
+00:03:15.701 --> 00:03:20.673
+If it stops right at the first frame, boot dot log names the exact step that failed.
+
+00:03:21.053 --> 00:03:26.395
+And if it's just slow at first, that's the shaders being built. It gets faster on the next start.
+
+00:03:27.275 --> 00:03:35.238
+And that's the renderer build! All three help videos, and every new build, are on the GitHub page. Thanks for testing, and good luck out there!
+
